@@ -28,6 +28,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [modelState, setModelState] = useState<'loading' | 'model' | 'gray'>('loading')
   const [pttHeld, setPttHeld] = useState(false)
+  const heldRef = useRef(false)
   const actionRef = useRef(onAction)
   const sceneRef = useRef<DeviceScene | null>(null)
 
@@ -63,16 +64,43 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
   }
 
   function onPTTDown(event: PointerEvent<HTMLButtonElement>) {
+    if (heldRef.current) return
     event.currentTarget.setPointerCapture(event.pointerId)
+    heldRef.current = true
     setPttHeld(true)
     trigger('ptt-start')
   }
 
   function onPTTUp() {
-    if (!pttHeld) return
+    if (!heldRef.current) return
+    heldRef.current = false
     setPttHeld(false)
     trigger('ptt-end')
   }
+
+  useEffect(() => {
+    const release = () => {
+      if (!heldRef.current) return
+      heldRef.current = false
+      setPttHeld(false)
+      actionRef.current('ptt-end')
+    }
+    const visibility = () => { if (document.hidden) release() }
+    window.addEventListener('blur', release)
+    document.addEventListener('visibilitychange', visibility)
+    return () => {
+      window.removeEventListener('blur', release)
+      document.removeEventListener('visibilitychange', visibility)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (phase !== 'listening' && phase !== 'talking' && heldRef.current) {
+      heldRef.current = false
+      setPttHeld(false)
+      actionRef.current('ptt-end')
+    }
+  }, [phase])
 
   return (
     <div className="device-page">
@@ -107,10 +135,14 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
             onPointerDown={onPTTDown}
             onPointerUp={onPTTUp}
             onPointerCancel={onPTTUp}
+            onLostPointerCapture={onPTTUp}
+            onBlur={onPTTUp}
             onPointerLeave={onPTTUp}
             onKeyDown={(event) => {
               if (event.repeat || (event.key !== ' ' && event.key !== 'Enter')) return
               event.preventDefault()
+              if (heldRef.current) return
+              heldRef.current = true
               setPttHeld(true)
               trigger('ptt-start')
             }}

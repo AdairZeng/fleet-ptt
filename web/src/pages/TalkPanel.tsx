@@ -31,6 +31,7 @@ export function TalkPanel({
   channelId,
   members,
   subscribe,
+  startUplinkRef,
   stopUplinkRef,
   leaveRoomRef,
   commanding,
@@ -43,6 +44,7 @@ export function TalkPanel({
   channelId: string
   members: Member[] | undefined
   subscribe: (listener: (event: SignalEvent) => void) => () => void
+  startUplinkRef: { current: () => void }
   stopUplinkRef: { current: () => Promise<void> }
   leaveRoomRef: { current: () => Promise<void> }
   commanding: boolean
@@ -218,6 +220,7 @@ export function TalkPanel({
   useEffect(() => {
     sessionRef.current = session
     channelIDRef.current = channelId
+    startUplinkRef.current = () => press()
     stopUplinkRef.current = () => {
       holdRef.current = false
       keyboardHoldRef.current = false
@@ -228,6 +231,15 @@ export function TalkPanel({
     }
     leaveRoomRef.current = () => roomRef.current?.leave() ?? Promise.resolve()
     onSignalRef.current = (event) => {
+      if (event.type === 'disconnected') {
+        holdRef.current = false
+        keyboardHoldRef.current = false
+        void stopLocal().catch(() => {})
+        setViewNow('error')
+        setError('连接已断开，发送已停止，请重试进房')
+        return
+      }
+      if (viewRef.current === 'error') return
       const action = selfTalkAction(
         event,
         channelIDRef.current,

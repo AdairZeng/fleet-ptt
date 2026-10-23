@@ -23,6 +23,7 @@ export type DeviceEvent =
   | { type: 'TALK_END' }
   | { type: 'FAIL' }
   | { type: 'RESET' }
+  | { type: 'MEDIA_STATE'; ready: boolean; talking: boolean; failed: boolean }
 
 export type DeviceSnapshot = {
   phase: DevicePhase
@@ -94,6 +95,12 @@ const allowed: Record<DevicePhase, Partial<Record<DeviceEvent['type'], true>>> =
 }
 
 export function reduceDevice(snapshot: DeviceSnapshot, event: DeviceEvent): DeviceSnapshot {
+  if (event.type === 'MEDIA_STATE') {
+    if (!snapshot.powered || snapshot.phase === 'booting') return snapshot
+    const phase = event.failed ? 'error' : event.talking ? 'talking' : event.ready ? 'listening' : 'standby'
+    if (phase === snapshot.phase) return snapshot
+    return { ...snapshot, phase, revision: snapshot.revision + 1, ...feedbackFor(phase) }
+  }
   if (!allowed[snapshot.phase][event.type]) return snapshot
 
   let phase = snapshot.phase

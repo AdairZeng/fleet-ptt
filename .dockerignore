@@ -1,0 +1,11 @@
+.git
+.cursor
+data
+.env
+.env.*
+**/node_modules
+web/dist
+certs
+*.pem
+*.key
+*.db

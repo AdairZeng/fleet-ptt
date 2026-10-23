@@ -11,6 +11,23 @@
 
 仓库仅提供 [`.env.example`](.env.example)。本地复制为 `.env` 后填写真实值，勿提交 `.env`。
 
-## 状态
+## 本地启动
 
-设计阶段；实现按技术方案推进。Docker Compose 一键启动见技术方案部署章节。
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+浏览器打开 <http://localhost:8080>。`GET /healthz` 返回 `OK`。数据目录 `data/` 挂载到容器 `/data`（已 gitignore）。
+
+开发时前后端分开跑（在仓库根目录）：
+
+```bash
+go run ./server/cmd/server
+```
+
+```bash
+cd web && npm install && npm run dev
+```
+
+Vite 把 `/healthz` 与 `/api` 代理到 `http://127.0.0.1:8080`。静态资源默认从仓库根目录的 `web/dist` 提供；可用 `STATIC_DIR` 覆盖。

@@ -1,23 +1,195 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createQiniuRoom, type RtnRoom } from '../rtc/index.ts'
+import {
+  endTalk,
+  observeSelfTalk,
+  remoteSpeakers,
+  selfTalkAction,
+  speakingText,
+  startTalk,
+  type Member,
+  type SignalEvent,
+} from '../signaling/index.ts'
 import { fetchRoomToken } from '../state/rtn.ts'
 import { reduceTalk, type TalkPhase } from '../state/talk.ts'
 import type { Session } from '../state/session.ts'
 
 type View = 'joining' | 'ready' | 'error'
 
-export function TalkPanel({ session, channelId }: { session: Session; channelId: string }) {
+export function TalkPanel({
+  session,
+  channelId,
+  members,
+  subscribe,
+}: {
+  session: Session
+  channelId: string
+  members: Member[] | undefined
+  subscribe: (listener: (event: SignalEvent) => void) => () => void
+}) {
   const [view, setView] = useState<View>('joining')
   const [talk, setTalk] = useState<TalkPhase>('out')
   const [error, setError] = useState('')
   const [listenHint, setListenHint] = useState('')
-  const [speakers, setSpeakers] = useState<string[]>([])
   const [attempt, setAttempt] = useState(0)
   const roomRef = useRef<RtnRoom | null>(null)
   const holdRef = useRef(false)
   const keyboardHoldRef = useRef(false)
+  const wantRef = useRef(false)
+  const suppressRef = useRef(0)
+  const generation = useRef(0)
+  const viewRef = useRef<View>('joining')
+  const sessionRef = useRef(session)
+  const channelIDRef = useRef(channelId)
+  const tailRef = useRef(Promise.resolve())
+  const onSignalRef = useRef<(event: SignalEvent) => void>(() => {})
   const sinkRef = useRef<HTMLDivElement>(null)
   const attemptRef = useRef(attempt)
+
+  function setViewNow(next: View) {
+    viewRef.current = next
+    setView(next)
+  }
+
+  function enqueue(task: () => Promise<void>) {
+    const run = tailRef.current.then(task, task)
+    tailRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    )
+  }
+
+  async function publishHeld(gen: number) {
+    const room = roomRef.current
+    if (!room || viewRef.current !== 'ready' || !wantRef.current) {
+      return
+    }
+    try {
+      const result = await room.startPublish()
+      if (generation.current !== gen || result === 'cancelled') {
+        await room.stopPublish()
+        if (generation.current === gen || !wantRef.current) {
+          wantRef.current = false
+          setTalk((phase) => reduceTalk(phase, 'TALK_END'))
+          try {
+            await endTalk(sessionRef.current)
+          } catch (err) {
+            setError(err instanceof Error ? err.message : '对讲状态更新失败')
+          }
+        }
+        return
+      }
+    } catch (err) {
+      if (generation.current !== gen) {
+        return
+      }
+      wantRef.current = false
+      holdRef.current = false
+      setTalk((phase) => reduceTalk(phase, 'TALK_END'))
+      setError(err instanceof Error ? err.message : '无法打开麦克风')
+      try {
+        await endTalk(sessionRef.current)
+      } catch {
+        // 麦克风失败时已经把本地状态收回；服务端结束失败留在下一次结束再试。
+      }
+    }
+  }
+
+  async function localStart(gen: number) {
+    try {
+      await startTalk(sessionRef.current)
+    } catch (err) {
+      if (generation.current !== gen) {
+        return
+      }
+      suppressRef.current = Math.max(0, suppressRef.current - 1)
+      wantRef.current = false
+      holdRef.current = false
+      setTalk((phase) => reduceTalk(phase, 'TALK_END'))
+      setError(err instanceof Error ? err.message : '对讲状态更新失败')
+      return
+    }
+    if (generation.current !== gen) {
+      if (!wantRef.current) {
+        try {
+          await endTalk(sessionRef.current)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '对讲状态更新失败')
+        }
+        await roomRef.current?.stopPublish()
+      }
+      return
+    }
+    await publishHeld(gen)
+  }
+
+  function stopLocal() {
+    const gen = ++generation.current
+    wantRef.current = false
+    setTalk((phase) => reduceTalk(phase, 'TALK_END'))
+    enqueue(async () => {
+      if (generation.current !== gen) {
+        return
+      }
+      try {
+        await endTalk(sessionRef.current)
+      } catch (err) {
+        if (generation.current === gen) {
+          setError(err instanceof Error ? err.message : '对讲状态更新失败')
+        }
+      }
+      if (generation.current !== gen) {
+        return
+      }
+      await roomRef.current?.stopPublish()
+    })
+  }
+
+  function beginFromSignal() {
+    const observed = observeSelfTalk(suppressRef.current, 'start')
+    suppressRef.current = observed.suppress
+    if (!observed.follow) {
+      return
+    }
+    const gen = ++generation.current
+    wantRef.current = true
+    setError('')
+    setTalk((phase) => (phase === 'out' ? phase : 'talking'))
+    enqueue(async () => {
+      if (generation.current !== gen || !wantRef.current) {
+        return
+      }
+      await publishHeld(gen)
+    })
+  }
+
+  function finishFromSignal() {
+    holdRef.current = false
+    keyboardHoldRef.current = false
+    if (!wantRef.current) {
+      setTalk((phase) => reduceTalk(phase, 'TALK_END'))
+      void roomRef.current?.stopPublish()
+      return
+    }
+    stopLocal()
+  }
+
+  useEffect(() => {
+    sessionRef.current = session
+    channelIDRef.current = channelId
+    onSignalRef.current = (event) => {
+      const action = selfTalkAction(event, channelIDRef.current, sessionRef.current.user_id)
+      if (action === 'start') {
+        beginFromSignal()
+      } else if (action === 'end') {
+        finishFromSignal()
+      }
+    }
+  })
+
+  useEffect(() => {
+    return subscribe((event) => onSignalRef.current(event))
+  }, [subscribe])
 
   useEffect(() => {
     const sink = sinkRef.current
@@ -27,11 +199,7 @@ export function TalkPanel({ session, channelId }: { session: Session; channelId:
     attemptRef.current = attempt
     let cancelled = false
     const room = createQiniuRoom(
-      (ids) => {
-        if (!cancelled) {
-          setSpeakers(ids)
-        }
-      },
+      () => {},
       sink,
       (err) => {
         if (cancelled) {
@@ -55,25 +223,40 @@ export function TalkPanel({ session, channelId }: { session: Session; channelId:
         if (cancelled) {
           return
         }
-        setView('ready')
-        setTalk((phase) => reduceTalk(phase, 'JOINED_CHANNEL'))
+        setViewNow('ready')
+        setTalk((phase) => (wantRef.current ? 'talking' : reduceTalk(phase, 'JOINED_CHANNEL')))
+        if (wantRef.current) {
+          const gen = generation.current
+          enqueue(async () => {
+            if (generation.current !== gen || !wantRef.current) {
+              return
+            }
+            await publishHeld(gen)
+          })
+        }
       } catch (err) {
         if (cancelled) {
           return
         }
-        setView('error')
+        setViewNow('error')
         setError(err instanceof Error ? err.message : '进房失败')
       }
     })()
     return () => {
       cancelled = true
+      const wasTalking = wantRef.current
+      wantRef.current = false
       holdRef.current = false
+      generation.current += 1
       void room.leave()
+      if (wasTalking) {
+        void endTalk(sessionRef.current).catch(() => {})
+      }
     }
   }, [session, channelId, attempt])
 
   function press(fromKeyboard = false) {
-    if (view !== 'ready' || holdRef.current) {
+    if (viewRef.current !== 'ready' || holdRef.current) {
       return
     }
     const room = roomRef.current
@@ -82,27 +265,15 @@ export function TalkPanel({ session, channelId }: { session: Session; channelId:
     }
     holdRef.current = true
     keyboardHoldRef.current = fromKeyboard
+    if (wantRef.current) {
+      return
+    }
+    const gen = ++generation.current
+    wantRef.current = true
+    suppressRef.current += 1
     setError('')
     setTalk((phase) => reduceTalk(phase, 'TALK_START'))
-    const generation = attemptRef.current
-    void room
-      .startPublish()
-      .then((result) => {
-        if (attemptRef.current !== generation) {
-          return
-        }
-        if (result === 'cancelled') {
-          setTalk((phase) => reduceTalk(phase, 'TALK_END'))
-        }
-      })
-      .catch((err: unknown) => {
-        if (attemptRef.current !== generation) {
-          return
-        }
-        holdRef.current = false
-        setTalk((phase) => reduceTalk(phase, 'TALK_END'))
-        setError(err instanceof Error ? err.message : '无法打开麦克风')
-      })
+    enqueue(() => localStart(gen))
   }
 
   function release() {
@@ -111,15 +282,13 @@ export function TalkPanel({ session, channelId }: { session: Session; channelId:
     }
     holdRef.current = false
     keyboardHoldRef.current = false
-    setTalk((phase) => reduceTalk(phase, 'TALK_END'))
-    void roomRef.current?.stopPublish()
+    stopLocal()
   }
 
   function end() {
     holdRef.current = false
     keyboardHoldRef.current = false
-    setTalk((phase) => reduceTalk(phase, 'TALK_END'))
-    void roomRef.current?.stopPublish()
+    stopLocal()
   }
 
   function unlockAudio() {
@@ -146,6 +315,7 @@ export function TalkPanel({ session, channelId }: { session: Session; channelId:
 
   const joined = view === 'ready'
   const talking = talk === 'talking'
+  const remote = remoteSpeakers(members, session.user_id)
 
   return (
     <section className="talk">
@@ -154,7 +324,13 @@ export function TalkPanel({ session, channelId }: { session: Session; channelId:
         {statusText(view, talk)}
       </p>
       {error ? <p className="error">{error}</p> : null}
-      {speakers.length > 0 ? <p className="speaking">有人正在说话</p> : null}
+      <div className="speakers" aria-live="polite">
+        {remote.map((member) => (
+          <p className="speaking" key={member.user_id}>
+            {speakingText(member.display_name)}
+          </p>
+        ))}
+      </div>
       {listenHint ? (
         <p className="hint">
           {listenHint}{' '}
@@ -206,9 +382,8 @@ export function TalkPanel({ session, channelId }: { session: Session; channelId:
           onClick={() => {
             setError('')
             setListenHint('')
-            setSpeakers([])
             setTalk('out')
-            setView('joining')
+            setViewNow('joining')
             setAttempt((n) => n + 1)
           }}
         >

@@ -2,7 +2,10 @@ module github.com/AdairZeng/fleet-ptt/server
 
 go 1.25
 
-require modernc.org/sqlite v1.39.0
+require (
+	github.com/coder/websocket v1.8.13
+	modernc.org/sqlite v1.39.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

@@ -10,15 +10,20 @@ import (
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
+	"github.com/AdairZeng/fleet-ptt/server/internal/ws"
 )
 
-// Register 挂上会话、当前用户、频道，以及 RTN RoomToken。
+// Register 挂上会话、当前用户、频道、RTN RoomToken，以及 WebSocket 信令。
 func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer) {
+	hub := ws.NewHub(users, channels)
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
 	mux.HandleFunc("GET /api/v1/me", Me(users, channels))
-	mux.HandleFunc("POST /api/v1/channels", CreateChannel(users, channels))
-	mux.HandleFunc("POST /api/v1/channels/join", JoinChannel(users, channels))
+	mux.HandleFunc("POST /api/v1/channels", CreateChannel(users, hub))
+	mux.HandleFunc("POST /api/v1/channels/join", JoinChannel(users, hub))
 	mux.HandleFunc("GET /api/v1/channels/{id}/rtn-token", RoomToken(users, channels, tokens))
+	mux.HandleFunc("POST /api/v1/talk/start", TalkStart(users, hub))
+	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
+	mux.HandleFunc("GET /api/v1/ws", hub.ServeHTTP)
 }
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。

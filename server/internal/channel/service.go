@@ -172,6 +172,29 @@ func (s *Service) joinExisting(ctx context.Context, userID string, ch store.Chan
 	return View{Channel: ch, Role: role}, nil
 }
 
+// SetTalking 标记用户是否正在对讲。还没有当前频道时返回 ErrNoCurrent。
+func (s *Service) SetTalking(ctx context.Context, userID string, talking bool) error {
+	err := s.Store.SetTalking(ctx, userID, talking)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrNoCurrent
+	}
+	return err
+}
+
+// Talking 读取用户是否正在对讲。还没有当前频道时返回 ErrNoCurrent。
+func (s *Service) Talking(ctx context.Context, userID string) (bool, error) {
+	talking, err := s.Store.IsTalking(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, ErrNoCurrent
+	}
+	return talking, err
+}
+
+// Members 返回频道成员和正在说状态。
+func (s *Service) Members(ctx context.Context, channelID string) ([]store.Member, error) {
+	return s.Store.ChannelMembers(ctx, channelID)
+}
+
 func validName(name string) bool {
 	n := 0
 	for _, r := range name {

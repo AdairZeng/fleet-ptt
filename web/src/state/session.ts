@@ -4,6 +4,8 @@ export type Session = {
   user_id: string
   session_token: string
   nickname: string
+  device_id?: string
+  linx_device_id?: string
 }
 
 export type MeChannel = {
@@ -38,6 +40,8 @@ export function loadSession(): Session | null {
       user_id: parsed.user_id,
       session_token: parsed.session_token,
       nickname: parsed.nickname,
+      device_id: parsed.device_id,
+      linx_device_id: parsed.linx_device_id,
     }
   } catch {
     return null
@@ -61,11 +65,11 @@ export function authHeaders(session: Session | null): Headers {
   return headers
 }
 
-export async function createSession(nickname: string, deviceID: string): Promise<Session> {
-  const res = await fetch('/api/v1/session', {
+export async function createSession(nickname: string, deviceID: string, linxDeviceID = ''): Promise<Session> {
+  const res = await fetch('/api/v1/device/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nickname, device_id: deviceID }),
+    body: JSON.stringify({ nickname, device_id: deviceID, linx_device_id: linxDeviceID }),
   })
   const body = (await readBody(res)) as ErrorBody & Partial<Session>
   if (!res.ok || !body.user_id || !body.session_token) {
@@ -75,6 +79,8 @@ export async function createSession(nickname: string, deviceID: string): Promise
     user_id: body.user_id,
     session_token: body.session_token,
     nickname,
+    device_id: body.device_id || deviceID,
+    linx_device_id: body.linx_device_id || undefined,
   }
 }
 

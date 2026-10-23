@@ -20,6 +20,7 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	hub := ws.NewHub(users, channels)
 	gate := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
+	mux.HandleFunc("POST /api/v1/device/session", CreateDeviceSession(users))
 	mux.HandleFunc("GET /api/v1/me", Me(users, channels))
 	mux.HandleFunc("GET /api/v1/channels", ListChannels(users, channels))
 	mux.HandleFunc("POST /api/v1/channels", CreateChannel(users, hub))
@@ -53,6 +54,26 @@ func CreateSession(svc *user.Service) http.HandlerFunc {
 			"user_id":       sess.User.ID,
 			"session_token": sess.Token,
 		})
+	}
+}
+
+func CreateDeviceSession(svc *user.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Nickname     string `json:"nickname"`
+			DeviceID     string `json:"device_id"`
+			LinxDeviceID string `json:"linx_device_id"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("请求格式无效"))
+			return
+		}
+		sess, err := svc.EnterDevice(r.Context(), req.Nickname, req.DeviceID, req.LinxDeviceID, time.Now())
+		if err != nil {
+			writeEnterError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"user_id": sess.User.ID, "session_token": sess.Token, "device_id": sess.Device.DeviceID, "linx_device_id": sess.Device.LinxDeviceID})
 	}
 }
 
@@ -91,6 +112,8 @@ func writeEnterError(w http.ResponseWriter, err error) {
 	case errors.Is(err, user.ErrNoSecret):
 		log.Printf("session: %v", err)
 		writeJSON(w, http.StatusInternalServerError, errorBody(err.Error()))
+	case errors.Is(err, user.ErrDeviceBinding):
+		writeJSON(w, http.StatusConflict, errorBody(err.Error()))
 	default:
 		log.Printf("session: %v", err)
 		writeJSON(w, http.StatusInternalServerError, errorBody("进入失败"))

@@ -26,7 +26,8 @@ var (
 	// ErrUnauthorized 表示缺少或无法校验 session_token。
 	ErrUnauthorized = errors.New("未登录或会话无效")
 	// ErrNoSecret 表示进程没有 SESSION_SECRET，无法签发会话。
-	ErrNoSecret = errors.New("服务器未配置 SESSION_SECRET")
+	ErrNoSecret      = errors.New("服务器未配置 SESSION_SECRET")
+	ErrDeviceBinding = errors.New("设备已绑定其他用户")
 )
 
 // Service 签发会话并把昵称绑定到 device_id。
@@ -37,12 +38,17 @@ type Service struct {
 
 // Session 是一次成功进入的结果。
 type Session struct {
-	User  store.User
-	Token string
+	User   store.User
+	Device store.Device
+	Token  string
 }
 
 // Enter 校验昵称与 device_id，按设备 upsert 用户，并签发 session_token。
 func (s *Service) Enter(ctx context.Context, nickname, deviceID string, now time.Time) (Session, error) {
+	return s.EnterDevice(ctx, nickname, deviceID, "", now)
+}
+
+func (s *Service) EnterDevice(ctx context.Context, nickname, deviceID, linxDeviceID string, now time.Time) (Session, error) {
 	nickname = strings.TrimSpace(nickname)
 	deviceID = strings.TrimSpace(deviceID)
 	if !validNickname(nickname) {
@@ -62,11 +68,26 @@ func (s *Service) Enter(ctx context.Context, nickname, deviceID string, now time
 	if err != nil {
 		return Session{}, err
 	}
+	d, err := s.Store.DeviceByID(ctx, deviceID)
+	if err == nil && d.UserID != u.ID {
+		return Session{}, ErrDeviceBinding
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return Session{}, err
+	}
+	d, err = s.Store.UpsertDevice(ctx, deviceID, u.ID, strings.TrimSpace(linxDeviceID), now.UTC())
+	if err != nil {
+		return Session{}, err
+	}
 	token, err := sign(s.Secret, u.ID, now.UTC())
 	if err != nil {
 		return Session{}, err
 	}
-	return Session{User: u, Token: token}, nil
+	return Session{User: u, Device: d, Token: token}, nil
+}
+
+func (s *Service) DeviceByID(ctx context.Context, deviceID string) (store.Device, error) {
+	return s.Store.DeviceByID(ctx, strings.TrimSpace(deviceID))
 }
 
 // Authenticate 校验 Bearer token 并加载对应用户。

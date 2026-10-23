@@ -104,17 +104,24 @@ export class RtnRoom {
       if (!this.want || !this.conn) {
         return 'cancelled'
       }
-      this.mic.setMuted(false)
+      const mic = this.mic
+      const conn = this.conn
+      mic.setMuted(false)
       try {
-        await this.conn.publish(this.mic)
+        await conn.publish(mic)
       } catch (error) {
-        this.mic.setMuted(true)
-        this.mic.destroy()
-        this.mic = null
+        if (this.mic === mic) {
+          mic.setMuted(true)
+          mic.destroy()
+          this.mic = null
+        }
+        if (this.closed) return 'cancelled'
         throw error
       }
-      if (this.closed || !this.want || generation !== this.generation) {
-        await this.conn.unpublish(this.mic)
+      // leave() already destroyed the mic and closed the connection.
+      if (this.closed) return 'cancelled'
+      if (!this.want || generation !== this.generation) {
+        await conn.unpublish(mic)
         this.published = false
         return 'cancelled'
       }
@@ -139,27 +146,22 @@ export class RtnRoom {
     this.closed = true
     this.want = false
     this.generation += 1
-    this.mic?.setMuted(true)
-    return this.enqueue(async () => {
-      if (this.published && this.mic && this.conn) {
-        await this.conn.unpublish(this.mic)
-        this.published = false
-      }
-      if (this.mic) {
-        this.mic.destroy()
-        this.mic = null
-      }
-      for (const playing of this.playing.values()) {
-        playing.stop()
-      }
-      this.playing.clear()
-      this.speakerTracks.clear()
-      this.onSpeakers([])
-      if (this.conn) {
-        await this.conn.leave()
-        this.conn = null
-      }
-    })
+    // Local capture/playback must not wait behind an unresolved SDK publish.
+    if (this.mic) {
+      this.mic.setMuted(true)
+      this.mic.destroy()
+      this.mic = null
+    }
+    this.published = false
+    for (const playing of this.playing.values()) playing.stop()
+    this.playing.clear()
+    this.pendingAudio.clear()
+    this.speakerTracks.clear()
+    this.onSpeakers([])
+    const conn = this.conn
+    this.conn = null
+    // A connection still joining is closed by join() when its result arrives.
+    return conn?.leave() ?? Promise.resolve()
   }
 
   setVolume(volume: number): void {

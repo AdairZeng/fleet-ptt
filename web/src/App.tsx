@@ -1,63 +1,36 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { DeviceShell, type DeviceAction } from './device/DeviceShell.tsx'
-import {
-  initialDeviceSnapshot,
-  reduceDevice,
-  type DeviceEvent,
-} from './device/controller.ts'
+import { DeviceShell } from './device/DeviceShell.tsx'
+import { useDeviceController } from './device/useDeviceController.ts'
 import { ChannelPage } from './pages/ChannelPage.tsx'
 import { NicknamePage } from './pages/NicknamePage.tsx'
-import { readJoinLocation } from './state/joinLink.ts'
-import {
-  createSession,
-  loadSession,
-  saveSession,
-  type Session,
-} from './state/session.ts'
 
 export default function App() {
-  const [session, setSession] = useState<Session | null>(loadSession)
-  const [displayNickname, setDisplayNickname] = useState(() => session?.nickname ?? '')
-  const [editingNickname, setEditingNickname] = useState(false)
-  const [device, dispatchDevice] = useReducer(reduceDevice, initialDeviceSnapshot)
-  const controls = useRef<(action: DeviceAction) => void>(() => {})
-  const reportDevice = useCallback((event: DeviceEvent) => dispatchDevice(event), [])
-  const [joinRequest] = useState(() => readJoinLocation(window.location))
-
-  async function enter(nickname: string) {
-    const next = await createSession(nickname, session)
-    saveSession(next)
-    setSession(next)
-    setDisplayNickname(next.nickname)
-    setEditingNickname(false)
-  }
-
-  function changeNickname() {
-    setEditingNickname(true)
-  }
-
-  useEffect(() => {
-    if (device.phase !== 'booting') return
-    const timer = window.setTimeout(() => {
-      dispatchDevice({ type: 'BOOT_READY', hasChannel: false })
-    }, 250)
-    return () => window.clearTimeout(timer)
-  }, [device.phase])
-
-  const screen = !device.powered ? <p>已关机</p> : device.phase === 'booting' ? <p>启动中…</p> : !session || editingNickname ? (
-    <NicknamePage onEnter={enter} joinRequest={joinRequest} />
+  const control = useDeviceController()
+  const { device, session } = control
+  const screen = !device.powered ? <p>已关机</p> : device.phase === 'booting' ? <p>启动中…</p> : !session || control.editingNickname ? (
+    <NicknamePage onEnter={control.enter} joinRequest={control.joinRequest} />
   ) : (
-    <ChannelPage onNicknameUpdated={setDisplayNickname} session={session} onChangeNickname={changeNickname} joinRequest={joinRequest} deviceControls={controls} onDeviceEvent={reportDevice} />
+    <ChannelPage
+      feedback={control.feedback}
+      onNicknameUpdated={control.setDisplayNickname}
+      session={session}
+      onChangeNickname={control.changeNickname}
+      joinRequest={control.joinRequest}
+      deviceControls={control.controls}
+      onDeviceEvent={control.reportDevice}
+    />
   )
-  const onDeviceAction = (action: DeviceAction) => {
-    if (action === 'power') {
-      if (device.powered) controls.current('ptt-end')
-      dispatchDevice({ type: 'POWER_TOGGLE' })
-      return
-    }
-    if (!device.powered || device.phase === 'booting') return
-    controls.current(action)
-  }
-  const status = `${device.screen} · 小路${session ? ` · ${displayNickname}` : ''}`
-  return <DeviceShell status={status} phase={device.phase} indicator={device.indicator} onAction={onDeviceAction}>{screen}</DeviceShell>
+  return (
+    <div
+      onPointerDownCapture={control.unlockSound}
+      onKeyDownCapture={control.unlockSound}
+      onPointerUpCapture={control.releaseSoundGesture}
+      onPointerCancelCapture={control.releaseSoundGesture}
+      onKeyUpCapture={control.releaseSoundGesture}
+    >
+      <DeviceShell status={control.status} phase={device.phase} indicator={device.indicator} onAction={control.onDeviceAction}>
+        {device.powered && control.soundError ? <p className="hint" role="status">{control.soundError}</p> : null}
+        {screen}
+      </DeviceShell>
+    </div>
+  )
 }

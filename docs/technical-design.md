@@ -77,7 +77,7 @@ fleet-ptt/
 ├── docs/
 ├── Dockerfile
 ├── docker-compose.yml
-├── Makefile             # 启动入口：make up / down / health
+├── Makefile             # 入口：make up / down / health / server / web
 ├── .env.example         # 唯一入库的配置样例
 └── .gitignore
 ```

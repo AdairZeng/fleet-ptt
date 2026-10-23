@@ -20,14 +20,14 @@ make up
 
 `make up`（等同 `make start`）会执行 `docker compose up --build`。浏览器打开 <http://localhost:8080>。另开终端执行 `make health`，应输出 `OK`。停止并移除容器：`make down`。数据目录 `data/` 挂载到容器 `/data`（已 gitignore）。
 
-开发时前后端分开跑（在仓库根目录）：
+开发时前后端分开跑（各开一个终端，在仓库根目录）：
 
 ```bash
-go run ./server/cmd/server
+make server
 ```
 
 ```bash
-cd web && npm install && npm run dev
+make web
 ```
 
-Vite 把 `/healthz` 与 `/api` 代理到 `http://127.0.0.1:8080`。静态资源默认从仓库根目录的 `web/dist` 提供；可用 `STATIC_DIR` 覆盖。
+`make web` 把 `/healthz` 与 `/api` 代理到 `http://127.0.0.1:8080`。`make server` 的静态资源默认从仓库根目录的 `web/dist` 提供，可用 `STATIC_DIR` 覆盖。

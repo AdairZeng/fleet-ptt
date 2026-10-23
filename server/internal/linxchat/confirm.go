@@ -67,3 +67,15 @@ func (g *JoinGate) Clear(userID string) {
 	defer g.mu.Unlock()
 	delete(g.pending, userID)
 }
+
+// Pending reads the active device context without consuming confirmation.
+func (g *JoinGate) Pending(deviceID string, now time.Time) (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p, ok := g.pending[deviceID]
+	if !ok || !now.Before(p.Until) {
+		delete(g.pending, deviceID)
+		return "", false
+	}
+	return p.Code, true
+}

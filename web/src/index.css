@@ -733,3 +733,16 @@ main > .error {
     color: #fca5a5;
   }
 }
+
+.device-indicator {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.indicator-off { color: #64748b; }
+.indicator-blue { color: #38bdf8; }
+.indicator-amber { color: #fbbf24; }
+.indicator-red { color: #f87171; }

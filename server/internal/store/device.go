@@ -72,3 +72,14 @@ func (s *Store) BindLinxDevice(ctx context.Context, deviceID, linxID string) err
 	}
 	return nil
 }
+
+func (s *Store) RenameUser(ctx context.Context, id, nickname string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET display_name = ? WHERE id = ?`, nickname, id)
+	return err
+}
+
+func (s *Store) PreviousChannel(ctx context.Context, userID string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT channel_id FROM device_channel_history WHERE user_id = ?`, userID).Scan(&id)
+	return id, err
+}

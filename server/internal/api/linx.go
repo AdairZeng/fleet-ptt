@@ -47,6 +47,7 @@ type linxSSEDetails struct {
 // 为空时拒绝全部回调。device_id 必须已绑定用户。
 // 识别到的建群、入群、切群、对讲和列表会执行，并用 SSE answer 供 TTS；结果同时推到该用户的 WebSocket。
 func LinxChat(users *user.Service, channels *channel.Service, hub *ws.Hub, gate *linxchat.JoinGate, token string) http.HandlerFunc {
+	nicknames := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			log.Print("linx chat: LINX_CHAT_TOKEN is empty")
@@ -87,7 +88,7 @@ func LinxChat(users *user.Service, channels *channel.Service, hub *ws.Hub, gate 
 			writeJSON(w, http.StatusInternalServerError, errorBody("读取用户失败"))
 			return
 		}
-		exec := voiceExec{channels: channels, hub: hub, gate: gate}
+		exec := voiceExec{channels: channels, hub: hub, gate: gate, nicknames: nicknames}
 		writeLinxSSE(w, sessionID, exec.run(r.Context(), u, msg, time.Now()))
 	}
 }

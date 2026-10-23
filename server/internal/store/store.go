@@ -99,6 +99,11 @@ func (s *Store) migrate() error {
 			current_channel_id TEXT,
 			talking INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS device_channel_history (user_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL)`,
+		`CREATE TRIGGER IF NOT EXISTS remember_previous_channel AFTER UPDATE OF current_channel_id ON user_session
+         WHEN OLD.current_channel_id IS NOT NULL AND OLD.current_channel_id <> NEW.current_channel_id
+         BEGIN INSERT INTO device_channel_history(user_id, channel_id) VALUES (OLD.user_id, OLD.current_channel_id)
+         ON CONFLICT(user_id) DO UPDATE SET channel_id = excluded.channel_id; END`,
 		`CREATE TABLE IF NOT EXISTS devices (
 			device_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,

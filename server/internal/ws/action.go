@@ -33,7 +33,7 @@ type pendingAction struct {
 // interprets a channel broadcast as an instruction to open a microphone.
 func (h *Hub) Execute(ctx context.Context, deviceID, action, channelID, value string) error {
 	switch action {
-	case "talk_start", "talk_end", "switch_channel", "set_volume", "show_join_qr":
+	case "talk_start", "talk_end", "switch_channel", "set_volume", "show_join_qr", "set_nickname":
 	default:
 		return errors.New("未知设备动作")
 	}

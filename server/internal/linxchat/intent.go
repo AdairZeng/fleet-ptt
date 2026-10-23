@@ -28,7 +28,13 @@ const (
 	// IntentListChannels 对应「我有哪些频道」。
 	IntentListChannels Intent = "list_my_channels"
 	// IntentEcho 是未识别话术。
-	IntentEcho Intent = "echo"
+	IntentEcho            Intent = "echo"
+	IntentPreviousChannel Intent = "previous_channel"
+	IntentListSpeakers    Intent = "list_speakers"
+	IntentShowJoinCode    Intent = "show_join_code"
+	IntentShowJoinQR      Intent = "show_join_qr"
+	IntentSetVolume       Intent = "set_volume"
+	IntentSetNickname     Intent = "set_nickname"
 )
 
 // Utterance 是一句话的归类和槽位。执行业务不在这里。
@@ -49,7 +55,22 @@ type Result struct {
 // Parse 按关键词归类，并抽出频道名、口令或序号。更具体的话术优先。
 func Parse(msg string) Utterance {
 	msg = strings.TrimSpace(msg)
+	msg = strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(msg, "你好小路"), "，,。 "))
 	switch {
+	case exact(msg, "上一频道", "上一个频道", "切回上一频道", "回到上一个频道"):
+		return Utterance{Intent: IntentPreviousChannel, Text: msg}
+	case strings.Contains(msg, "谁在说话"), strings.Contains(msg, "谁在讲话"):
+		return Utterance{Intent: IntentListSpeakers, Text: msg}
+	case strings.Contains(msg, "二维码"):
+		return Utterance{Intent: IntentShowJoinQR, Text: msg}
+	case exact(msg, "频道口令", "当前口令", "口令是多少", "查看口令"):
+		return Utterance{Intent: IntentShowJoinCode, Text: msg}
+	case strings.HasPrefix(msg, "叫我"), strings.HasPrefix(msg, "昵称改成"), strings.HasPrefix(msg, "修改昵称"):
+		return Utterance{Intent: IntentSetNickname, Name: cutAfter(msg, []string{"叫我", "昵称改成", "修改昵称"}), Text: msg}
+	case strings.HasPrefix(msg, "音量"):
+		value := strings.TrimSpace(strings.TrimSuffix(cutAfter(msg, []string{"音量调到", "音量设为", "音量"}), "%"))
+		value = strings.TrimPrefix(value, "百分之")
+		return Utterance{Intent: IntentSetVolume, Name: value, Text: msg}
 	case strings.Contains(msg, "结束对讲"):
 		return Utterance{Intent: IntentTalkEnd, Text: msg}
 	case strings.Contains(msg, "开始对讲"):
@@ -226,4 +247,49 @@ func utteranceCode(s string) (string, bool) {
 		}
 	}
 	return code, true
+}
+
+// ParseVolume accepts decimal or spoken Chinese percentages in the device range.
+func ParseVolume(text string) (int, bool) {
+	text = strings.TrimSpace(text)
+	if n, err := strconv.Atoi(text); err == nil {
+		return n, n >= 0 && n <= 100
+	}
+	if text == "一百" {
+		return 100, true
+	}
+	digits := map[rune]int{'零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+	chars := []rune(text)
+	if len(chars) == 1 {
+		if chars[0] == '十' {
+			return 10, true
+		}
+		n, ok := digits[chars[0]]
+		return n, ok
+	}
+	for i, r := range chars {
+		if r != '十' {
+			continue
+		}
+		if i > 1 || len(chars)-i > 2 {
+			return 0, false
+		}
+		tens, ones := 1, 0
+		if i == 1 {
+			var ok bool
+			tens, ok = digits[chars[0]]
+			if !ok || tens == 0 {
+				return 0, false
+			}
+		}
+		if i+1 < len(chars) {
+			var ok bool
+			ones, ok = digits[chars[i+1]]
+			if !ok {
+				return 0, false
+			}
+		}
+		return tens*10 + ones, true
+	}
+	return 0, false
 }

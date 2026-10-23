@@ -4,18 +4,22 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
+	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 	"github.com/AdairZeng/fleet-ptt/server/internal/ws"
 )
 
 type voiceExec struct {
-	channels *channel.Service
-	hub      *ws.Hub
-	gate     *linxchat.JoinGate
+	channels  *channel.Service
+	hub       *ws.Hub
+	gate      *linxchat.JoinGate
+	nicknames *linxchat.JoinGate
 }
 
 type voiceResult struct {
@@ -30,6 +34,23 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	if talkErr != nil && !errors.Is(talkErr, channel.ErrNoCurrent) {
 		return linxchat.Result{Intent: parsed.Intent, Answer: "停止发送失败，操作未执行"}
 	}
+	if parsed.Intent == linxchat.IntentConfirmJoin && e.nicknames != nil {
+		if nickname, ok := e.nicknames.Confirm(u.DeviceID, now); ok {
+			if err := e.channels.Store.RenameUser(ctx, u.ID, nickname); err != nil {
+				return linxchat.Result{Intent: linxchat.IntentSetNickname, Answer: "修改昵称失败"}
+			}
+			if err := e.hub.Execute(ctx, u.DeviceID, "set_nickname", "", nickname); err != nil {
+				return linxchat.Result{Intent: linxchat.IntentSetNickname, Answer: "昵称已保存，设备显示未同步：" + err.Error()}
+			}
+			return linxchat.Result{Intent: linxchat.IntentSetNickname, Answer: "以后叫你" + nickname}
+		}
+	}
+	if parsed.Intent == linxchat.IntentCancelJoin && e.nicknames != nil {
+		e.nicknames.Clear(u.DeviceID)
+	}
+	if parsed.Intent != linxchat.IntentSetNickname && parsed.Intent != linxchat.IntentConfirmJoin && parsed.Intent != linxchat.IntentCancelJoin && e.nicknames != nil {
+		e.nicknames.Clear(u.DeviceID)
+	}
 	if parsed.Intent != linxchat.IntentJoinChannel &&
 		parsed.Intent != linxchat.IntentConfirmJoin &&
 		parsed.Intent != linxchat.IntentCancelJoin {
@@ -37,6 +58,46 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	}
 	var out voiceResult
 	switch parsed.Intent {
+	case linxchat.IntentPreviousChannel:
+		target, err := e.channels.Store.PreviousChannel(ctx, u.ID)
+		if err != nil {
+			out = fail(parsed.Intent, "没有上一频道")
+			break
+		}
+		if _, err := e.hub.Switch(ctx, u.ID, target); err != nil {
+			out = fail(parsed.Intent, voiceErr(err, "回切失败"))
+			break
+		}
+		if err := e.hub.Execute(ctx, u.DeviceID, "switch_channel", target, ""); err != nil {
+			out = fail(parsed.Intent, err.Error())
+			break
+		}
+		out = voiceResult{Intent: parsed.Intent, Answer: "已回到上一频道"}
+	case linxchat.IntentSetNickname:
+		if !user.ValidNickname(parsed.Name) {
+			out = fail(parsed.Intent, "请说 1 到 32 字的昵称")
+			break
+		}
+		if e.nicknames == nil {
+			out = fail(parsed.Intent, "昵称确认不可用")
+			break
+		}
+		e.nicknames.Clear(u.DeviceID)
+		e.nicknames.Offer(u.DeviceID, parsed.Name, now)
+		out = voiceResult{Intent: parsed.Intent, Answer: "以后叫你" + parsed.Name + "，请说确认或取消"}
+	case linxchat.IntentSetVolume:
+		volume, ok := linxchat.ParseVolume(parsed.Name)
+		if !ok {
+			out = fail(parsed.Intent, "请说音量调到 0 到 100 的数字")
+			break
+		}
+		if err := e.hub.Execute(ctx, u.DeviceID, "set_volume", "", strconv.Itoa(volume)); err != nil {
+			out = fail(parsed.Intent, err.Error())
+			break
+		}
+		out = voiceResult{Intent: parsed.Intent, Answer: "音量已调到" + strconv.Itoa(volume)}
+	case linxchat.IntentListSpeakers, linxchat.IntentShowJoinCode, linxchat.IntentShowJoinQR:
+		out = e.channelInformation(ctx, u, parsed.Intent)
 	case linxchat.IntentCreateChannel:
 		out = e.create(ctx, u.ID, parsed.Name, now)
 	case linxchat.IntentJoinChannel:
@@ -262,4 +323,34 @@ func voiceErr(err error, fallback string) string {
 		log.Printf("linx: %v", err)
 		return fallback
 	}
+}
+
+func (e voiceExec) channelInformation(ctx context.Context, u store.User, intent linxchat.Intent) voiceResult {
+	current, err := e.channels.Current(ctx, u.ID)
+	if err != nil {
+		return fail(intent, "还没有进入频道")
+	}
+	if intent == linxchat.IntentShowJoinCode {
+		return voiceResult{Intent: intent, Answer: "频道口令是" + strings.Join(strings.Split(current.Channel.JoinCode, ""), "、")}
+	}
+	if intent == linxchat.IntentShowJoinQR {
+		if err := e.hub.Execute(ctx, u.DeviceID, "show_join_qr", current.Channel.ID, ""); err != nil {
+			return fail(intent, err.Error())
+		}
+		return voiceResult{Intent: intent, Answer: "二维码已显示"}
+	}
+	members, err := e.channels.Members(ctx, current.Channel.ID)
+	if err != nil {
+		return fail(intent, "读取讲话成员失败")
+	}
+	names := []string{}
+	for _, m := range members {
+		if m.Talking {
+			names = append(names, m.DisplayName)
+		}
+	}
+	if len(names) == 0 {
+		return voiceResult{Intent: intent, Answer: "当前没有人讲话"}
+	}
+	return voiceResult{Intent: intent, Answer: strings.Join(names, "、") + "正在讲话"}
 }

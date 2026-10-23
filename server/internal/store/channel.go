@@ -188,6 +188,75 @@ type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+// Member 是频道成员及其在该频道的对讲状态。
+// 只有当前频道就是这个频道时，talking 才为 true。
+type Member struct {
+	UserID      string
+	DisplayName string
+	Talking     bool
+}
+
+// SetTalking 更新 user_session.talking。还没有会话行时返回 ErrNotFound。
+func (s *Store) SetTalking(ctx context.Context, userID string, talking bool) error {
+	bit := 0
+	if talking {
+		bit = 1
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE user_session SET talking = ? WHERE user_id = ?`, bit, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// IsTalking 读取该用户是否正在对讲。还没有会话行时返回 ErrNotFound。
+func (s *Store) IsTalking(ctx context.Context, userID string) (bool, error) {
+	var talking int
+	err := s.db.QueryRowContext(ctx, `SELECT talking FROM user_session WHERE user_id = ?`, userID).Scan(&talking)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return talking != 0, nil
+}
+
+// ChannelMembers 返回频道成员。talking 只在「正在对讲且当前频道就是此频道」时为 true。
+func (s *Store) ChannelMembers(ctx context.Context, channelID string) ([]Member, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT u.id, u.display_name,
+			CASE WHEN us.talking = 1 AND us.current_channel_id = m.channel_id THEN 1 ELSE 0 END
+		FROM memberships AS m
+		JOIN users AS u ON u.id = m.user_id
+		LEFT JOIN user_session AS us ON us.user_id = m.user_id
+		WHERE m.channel_id = ?
+		ORDER BY u.display_name, u.id`, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Member{}
+	for rows.Next() {
+		var member Member
+		var talking int
+		if err := rows.Scan(&member.UserID, &member.DisplayName, &talking); err != nil {
+			return nil, err
+		}
+		member.Talking = talking != 0
+		out = append(out, member)
+	}
+	return out, rows.Err()
+}
+
 func setCurrentChannel(ctx context.Context, ex execer, userID, channelID string) error {
 	_, err := ex.ExecContext(ctx, `
 		INSERT INTO user_session (user_id, current_channel_id, talking)

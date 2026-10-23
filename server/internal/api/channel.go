@@ -9,6 +9,7 @@ import (
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
+	"github.com/AdairZeng/fleet-ptt/server/internal/ws"
 )
 
 type channelBody struct {
@@ -26,7 +27,8 @@ type meBody struct {
 }
 
 // CreateChannel 接受 { name }，创建频道并返回口令。需要 Bearer session。
-func CreateChannel(users *user.Service, channels *channel.Service) http.HandlerFunc {
+// 创建者的 WebSocket 会收到 channel_created；若此前正在对讲，旧频道收到 talk_end。
+func CreateChannel(users *user.Service, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, ok := requireUser(users, w, r)
 		if !ok {
@@ -38,7 +40,7 @@ func CreateChannel(users *user.Service, channels *channel.Service) http.HandlerF
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		created, err := channels.Create(r.Context(), u.ID, req.Name, time.Now())
+		created, err := hub.Create(r.Context(), u.ID, req.Name, time.Now())
 		if err != nil {
 			writeChannelError(w, err, "创建频道失败")
 			return
@@ -48,7 +50,8 @@ func CreateChannel(users *user.Service, channels *channel.Service) http.HandlerF
 }
 
 // JoinChannel 接受 { code } 或 { name }。口令优先。加入后设为当前频道。
-func JoinChannel(users *user.Service, channels *channel.Service) http.HandlerFunc {
+// 频道变化时给该用户推 channel_switched；若离开的频道上正在对讲，先广播 talk_end。
+func JoinChannel(users *user.Service, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, ok := requireUser(users, w, r)
 		if !ok {
@@ -61,7 +64,7 @@ func JoinChannel(users *user.Service, channels *channel.Service) http.HandlerFun
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		joined, err := channels.Join(r.Context(), u.ID, req.Code, req.Name)
+		joined, err := hub.Join(r.Context(), u.ID, req.Code, req.Name)
 		if err != nil {
 			writeChannelError(w, err, "加入频道失败")
 			return

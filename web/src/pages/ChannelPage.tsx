@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { TalkPanel } from './TalkPanel.tsx'
+import { useChannelSignaling } from '../signaling/useChannelSignaling.ts'
 import { createChannel, joinChannelByCode, type Channel } from '../state/channel.ts'
 import { fetchMe, type Me, type MeChannel, type Session } from '../state/session.ts'
 
@@ -18,6 +19,34 @@ export function ChannelPage({
   const [createError, setCreateError] = useState('')
   const [joinError, setJoinError] = useState('')
   const [pending, setPending] = useState<'create' | 'join' | ''>('')
+  const [signalError, setSignalError] = useState('')
+  const onChannelCreated = useCallback(
+    (event: { channel_id: string; name: string; join_code: string }) => {
+      setChannel({
+        channel_id: event.channel_id,
+        name: event.name,
+        join_code: event.join_code,
+        role: 'owner',
+      })
+    },
+    [],
+  )
+  const onChannelSwitched = useCallback(() => {
+    fetchMe(session)
+      .then((next) => {
+        if (next.channel) {
+          setChannel(toChannel(next.channel))
+        }
+      })
+      .catch((err: unknown) => {
+        setSignalError(err instanceof Error ? err.message : '切换频道失败')
+      })
+  }, [session])
+  const signaling = useChannelSignaling(session, {
+    onChannelCreated,
+    onChannelSwitched,
+    onError: setSignalError,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -97,6 +126,7 @@ export function ChannelPage({
       ) : (
         <p>正在确认身份…</p>
       )}
+      {signalError ? <p className="error">{signalError}</p> : null}
 
       {channel ? (
         <section>
@@ -114,7 +144,15 @@ export function ChannelPage({
         <p className="hint">还没有当前频道。创建一个频道，或输入队长给你的 6 位口令。</p>
       )}
 
-      {channel ? <TalkPanel key={channel.channel_id} session={session} channelId={channel.channel_id} /> : null}
+      {channel ? (
+        <TalkPanel
+          key={channel.channel_id}
+          session={session}
+          channelId={channel.channel_id}
+          members={signaling.rosters[channel.channel_id]}
+          subscribe={signaling.subscribe}
+        />
+      ) : null}
 
       <section>
         <h2>创建频道</h2>

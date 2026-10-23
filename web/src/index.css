@@ -131,8 +131,19 @@ p.talk-status {
   font-weight: 600;
 }
 
-p.speaking {
+.speakers {
+  display: grid;
+  gap: 0.35rem;
   margin-top: 0.35rem;
+}
+
+.speakers:empty {
+  display: none;
+}
+
+p.speaking {
+  margin-top: 0;
+  font-weight: 600;
 }
 
 .remote-audio {

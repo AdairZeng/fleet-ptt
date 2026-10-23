@@ -64,7 +64,7 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
-	// 表结构对应技术方案 §4.1。user_session 记录当前频道，口令过期与 talking 流程不在这里。
+	// 表结构对应技术方案 §4.1。user_session 记录当前频道，以及该用户是否正在对讲。
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,

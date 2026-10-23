@@ -176,6 +176,27 @@ func TestRoomTokenNotShadowedByStatic(t *testing.T) {
 	}
 }
 
+func TestSignalingNotShadowedByStatic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	users, channels := testDeps(t)
+	h := newHandler(dir, users, channels, rtn.Signer{})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil))
+	if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "home") || !strings.Contains(rec.Body.String(), "未登录") {
+		t.Fatalf("ws status %d body %s", rec.Code, rec.Body)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/talk/start", nil))
+	if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "home") {
+		t.Fatalf("talk status %d body %s", rec.Code, rec.Body)
+	}
+}
+
 func testDeps(t *testing.T) (*user.Service, *channel.Service) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "fleet.db"))

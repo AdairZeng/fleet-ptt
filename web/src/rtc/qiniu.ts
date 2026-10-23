@@ -26,9 +26,12 @@ export function createQiniuRoom(
 function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) => void): RtnTransport {
   const mics = new WeakMap<LocalMic, QNMicrophoneAudioTrack>()
   return {
-    async join(token, events) {
+    async join(token, events, signal) {
       const QNRTC = await loadSdk()
+      signal.throwIfAborted()
       const client = QNRTC.createClient()
+      const abort = () => { void client.leave().catch(() => {}) }
+      signal.addEventListener('abort', abort, { once: true })
       const byID = new Map<string, SdkRemoteTrack>()
       const conn: RtnConnection = {
         async publish(mic) {
@@ -56,6 +59,7 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
           return audioTracks.map((track) => toRemoteAudio(track, sink, onPlayError))
         },
         async leave() {
+          signal.removeEventListener('abort', abort)
           await client.leave()
         },
       }
@@ -68,13 +72,14 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
         }
       }
       const handlePublished = async (userID: string, tracks: SdkRemoteTrack[]) => {
+        if (signal.aborted) return
         remember(tracks)
         await events.onPublished(conn, userID, tracks.map(toRemoteTrack))
       }
 
       client.on('user-published', (userID, tracks) => {
         void handlePublished(userID, tracks).catch((err: unknown) => {
-          onPlayError(err)
+          if (!signal.aborted) onPlayError(err)
         })
       })
       client.on('user-unpublished', (userID, tracks) => {
@@ -88,7 +93,9 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
 
       try {
         await client.join(token)
+        signal.throwIfAborted()
       } catch (error) {
+        signal.removeEventListener('abort', abort)
         await client.leave().catch(() => {})
         throw error
       }
@@ -96,10 +103,11 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
         const pending = user.getAudioTracks().filter((track) => track.trackID && !track.isSubscribed())
         if (pending.length > 0) {
           await handlePublished(user.userID, pending).catch((err: unknown) => {
-            onPlayError(err)
+            if (!signal.aborted) onPlayError(err)
           })
         }
       }
+      signal.removeEventListener('abort', abort)
       return conn
     },
     async createMic() {

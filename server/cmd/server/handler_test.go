@@ -10,13 +10,14 @@ import (
 	"testing"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
 
 func TestHealthz(t *testing.T) {
 	users, channels := testDeps(t)
-	h := newHandler(filepath.Join(t.TempDir(), "missing"), users, channels)
+	h := newHandler(filepath.Join(t.TempDir(), "missing"), users, channels, rtn.Signer{})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -50,7 +51,7 @@ func TestStaticSite(t *testing.T) {
 	}
 
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels)
+	h := newHandler(dir, users, channels, rtn.Signer{})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
@@ -77,7 +78,7 @@ func TestSessionNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels)
+	h := newHandler(dir, users, channels, rtn.Signer{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"老王","device_id":"device-1"}`))
@@ -96,7 +97,7 @@ func TestChannelNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels)
+	h := newHandler(dir, users, channels, rtn.Signer{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"队长","device_id":"device-1"}`))
@@ -120,6 +121,58 @@ func TestChannelNotShadowedByStatic(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "home") || !strings.Contains(rec.Body.String(), `"join_code"`) {
 		t.Fatalf("body %s", rec.Body)
+	}
+}
+
+func TestRoomTokenNotShadowedByStatic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	users, channels := testDeps(t)
+	h := newHandler(dir, users, channels, rtn.Signer{
+		AccessKey: "test-ak",
+		SecretKey: "test-sk-should-not-leak",
+		AppID:     "test-app",
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"队长","device_id":"device-1"}`))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body)
+	}
+	var sess struct {
+		SessionToken string `json:"session_token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/channels", strings.NewReader(`{"name":"装货"}`))
+	req.Header.Set("Authorization", "Bearer "+sess.SessionToken)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("channel %d %s", rec.Code, rec.Body)
+	}
+	var created struct {
+		ChannelID string `json:"channel_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/channels/"+created.ChannelID+"/rtn-token", nil)
+	req.Header.Set("Authorization", "Bearer "+sess.SessionToken)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("token %d %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "home") || !strings.Contains(body, `"token"`) || strings.Contains(body, "test-sk-should-not-leak") {
+		t.Fatalf("body %s", body)
 	}
 }
 

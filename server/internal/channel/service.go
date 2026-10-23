@@ -32,6 +32,8 @@ var (
 	ErrAmbiguousName = errors.New("有多个同名频道，请改用口令加入")
 	// ErrNoCurrent 表示这个用户还没有当前频道。
 	ErrNoCurrent = errors.New("没有当前频道")
+	// ErrNotMember 表示用户不在这个频道里，不能拿进房凭证。
+	ErrNotMember = errors.New("还不是这个频道的成员")
 )
 
 // View 是一次创建或加入的结果，Role 是该用户在频道里的角色。
@@ -97,6 +99,25 @@ func (s *Service) Join(ctx context.Context, userID, code, name string) (View, er
 		return s.joinByName(ctx, userID, name)
 	}
 	return View{}, ErrInvalidJoin
+}
+
+// RequireMember 确认 userID 是 channelID 的成员。频道不存在与不是成员分开返回。
+func (s *Service) RequireMember(ctx context.Context, userID, channelID string) (View, error) {
+	ch, err := s.Store.ChannelByID(ctx, channelID)
+	if errors.Is(err, store.ErrNotFound) {
+		return View{}, ErrNameNotFound
+	}
+	if err != nil {
+		return View{}, err
+	}
+	role, err := s.Store.MemberRole(ctx, userID, channelID)
+	if errors.Is(err, store.ErrNotFound) {
+		return View{}, ErrNotMember
+	}
+	if err != nil {
+		return View{}, err
+	}
+	return View{Channel: ch, Role: role}, nil
 }
 
 // Current 返回该用户的当前频道。还没有时返回 ErrNoCurrent。

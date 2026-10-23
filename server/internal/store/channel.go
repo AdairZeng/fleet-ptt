@@ -122,6 +122,27 @@ func (s *Store) JoinChannel(ctx context.Context, userID, channelID, role string)
 	return got, nil
 }
 
+// ChannelByID 按主键读取频道。不存在时返回 ErrNotFound。
+func (s *Store) ChannelByID(ctx context.Context, id string) (Channel, error) {
+	const q = `SELECT id, name, join_code, created_by, created_at FROM channels WHERE id = ?`
+	return scanChannel(s.db.QueryRowContext(ctx, q, id))
+}
+
+// MemberRole 返回用户在该频道的角色。不是成员时返回 ErrNotFound。
+func (s *Store) MemberRole(ctx context.Context, userID, channelID string) (string, error) {
+	var role string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT role FROM memberships WHERE user_id = ? AND channel_id = ?`,
+		userID, channelID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return role, nil
+}
+
 // CurrentChannel 返回用户当前频道及其角色。还没有当前频道时返回 ErrNotFound。
 func (s *Store) CurrentChannel(ctx context.Context, userID string) (Channel, string, error) {
 	const q = `

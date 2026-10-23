@@ -97,8 +97,9 @@ p.meta {
   word-break: break-all;
 }
 
-p.hint {
-  margin-top: 0.75rem;
+p.hint button.secondary {
+  margin-top: 0;
+  margin-left: 0.35rem;
 }
 
 p.channel-name {
@@ -123,6 +124,53 @@ p.join-code {
   font-size: 1.75rem;
   font-weight: 700;
   letter-spacing: 0.35rem;
+}
+
+p.talk-status {
+  margin-top: 0.75rem;
+  font-weight: 600;
+}
+
+p.speaking {
+  margin-top: 0.35rem;
+}
+
+.remote-audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.talk-actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+button.ptt,
+button.end {
+  width: 100%;
+  margin-top: 0;
+}
+
+button.ptt {
+  min-height: 4.75rem;
+  font-size: 1.25rem;
+  border-radius: 999px;
+  background: #b91c1c;
+  touch-action: none;
+  user-select: none;
+}
+
+button.ptt.talking {
+  background: #7f1d1d;
+}
+
+button.end {
+  background: #1f2937;
 }
 
 @media (prefers-color-scheme: dark) {

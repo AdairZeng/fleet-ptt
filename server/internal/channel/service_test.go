@@ -124,6 +124,28 @@ func TestCreateAndJoin(t *testing.T) {
 	}
 }
 
+func TestRequireMember(t *testing.T) {
+	svc := newChannelService(t)
+	ctx := context.Background()
+	created, err := svc.Create(ctx, "captain", "装货", time.Unix(1, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.RequireMember(ctx, "captain", created.Channel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Role != RoleOwner || got.Channel.ID != created.Channel.ID {
+		t.Fatalf("owner %+v", got)
+	}
+	if _, err := svc.RequireMember(ctx, "driver", created.Channel.ID); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("non-member err %v", err)
+	}
+	if _, err := svc.RequireMember(ctx, "captain", "missing-channel"); !errors.Is(err, ErrNameNotFound) {
+		t.Fatalf("missing channel err %v", err)
+	}
+}
+
 func newChannelService(t *testing.T) *Service {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "fleet.db"))

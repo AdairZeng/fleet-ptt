@@ -6,6 +6,7 @@ type SignalHandlers = {
   onChannelCreated: (event: Extract<SignalEvent, { type: 'channel_created' }>) => void
   onChannelSwitched: (event: Extract<SignalEvent, { type: 'channel_switched' }>) => void
   onError: (message: string) => void
+  onNotice: (message: string) => void
 }
 
 export function useChannelSignaling(session: Session, handlers: SignalHandlers) {
@@ -26,6 +27,8 @@ export function useChannelSignaling(session: Session, handlers: SignalHandlers) 
         handlersRef.current.onChannelSwitched(event)
       } else if (event.type === 'error') {
         handlersRef.current.onError(event.message)
+      } else if (event.type === 'notice') {
+        handlersRef.current.onNotice(event.message)
       }
       for (const listener of listeners.current) {
         listener(event)

@@ -257,7 +257,7 @@ SSE 响应：`event: message` + `type: chat` 的 `answer` 文案供 TTS；需要
 
 口令相关 `answer` 须适合逐位朗读（如「口令是 3、8、4、2、9、1」）。
 
-实现约定见 [灵矽接入结论](./linx-access.md)：`Authorization` 必须等于 `LINX_CHAT_TOKEN`；`device_id` 必须已绑定用户；成功时先返回 `answer`，再返回 `message_end`。关键词路由目前只返回占位文案，建群、入群、切群与对讲的执行不在这条回调里。
+实现约定见 [灵矽接入结论](./linx-access.md)：`Authorization` 必须等于 `LINX_CHAT_TOKEN`；`device_id` 必须已绑定用户；成功时先返回 `answer`，再返回 `message_end`。关键词路由会执行建群、入群、切群、开始或结束对讲，以及列出频道。口令按逐位文案返回；口令入群先复述确认一次。成功或失败都会推到该用户的 WebSocket，失败的 `answer` 不能为空。
 
 ---
 

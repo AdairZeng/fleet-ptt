@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coder/websocket"
+
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 )
 
@@ -38,7 +40,8 @@ func TestLinxChatSSE(t *testing.T) {
 		t.Fatalf("message %#v", events[0])
 	}
 	details, _ := events[0]["details"].(map[string]any)
-	if details["answer"] != "已收到建群指令，稍后播报口令" || details["intent"] != "create_channel" {
+	answer, _ := details["answer"].(string)
+	if details["intent"] != "create_channel" || !strings.Contains(answer, "已创建装货。口令是 ") || !strings.Contains(answer, "、") {
 		t.Fatalf("details %#v", details)
 	}
 	if events[1]["event"] != "message_end" || events[1]["session_id"] != session {
@@ -53,6 +56,11 @@ func TestLinxChatSSE(t *testing.T) {
 	echoDetails, _ := echoEvents[0]["details"].(map[string]any)
 	if echo.Code != http.StatusOK || echoDetails["answer"] != "收到：你好车队" || echoEvents[0]["session_id"] != "sid/keep" {
 		t.Fatalf("echo status %d body %s", echo.Code, echo.Body)
+	}
+
+	badCode := postLinx(t, h, token, linxBody(device, "加入口令 384291", "s-bad-code"))
+	if answer := sseAnswer(t, badCode.Body.String()); badCode.Code != http.StatusOK || answer != "口令不正确" {
+		t.Fatalf("bad code status %d answer %q", badCode.Code, answer)
 	}
 }
 
@@ -109,28 +117,180 @@ func TestLinxChatRejectsIllegalCallbacks(t *testing.T) {
 	}
 }
 
-func TestLinxChatDoesNotExecuteIntent(t *testing.T) {
-	const device = "device-linx"
+func TestLinxVoiceCreateJoinSwitchAndTalk(t *testing.T) {
+	const token = "linx-test-token"
 	svc := newService(t)
-	h := newMuxWithLinx(svc, rtn.Signer{}, "linx-test-token")
-	res := postSession(t, h, `{"nickname":"老王","device_id":"`+device+`"}`)
-	var sess struct {
-		SessionToken string `json:"session_token"`
-	}
-	decode(t, res, &sess)
+	h := newMuxWithLinx(svc, rtn.Signer{}, token)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
 
-	rec := postLinx(t, h, "linx-test-token", linxBody(device, "建一个装货频道", "s-1"))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("chat %d %s", rec.Code, rec.Body)
+	captainToken, captainID := sessionPair(t, h, "老王", "device-captain")
+	driverToken, _ := sessionPair(t, h, "司机乙", "device-driver")
+
+	captain := dialWS(t, srv, captainToken, false)
+	captainBox := collectWS(t, captain)
+	events := waitLinx(t, captainBox, 3, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-captain", "建一个装货频道", "s-create"))
+	})
+	createAnswer := sseAnswer(t, events.rec.Body.String())
+	got := events.fresh
+	if got[0].Type != "channel_created" || got[0].Name != "装货" || got[0].JoinCode == "" {
+		t.Fatalf("channel_created %#v", got[0])
+	}
+	if !strings.Contains(createAnswer, "已创建装货。"+speakDigits(got[0].JoinCode)) || got[2].Type != "notice" || got[2].Message != createAnswer {
+		t.Fatalf("announce %q events %#v", createAnswer, got)
+	}
+	if got[1].Type != "members" || !hasMember(got[1], captainID, "老王", false) {
+		t.Fatalf("members %#v", got[1])
 	}
 
-	list := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels", nil)
-	req.Header.Set("Authorization", "Bearer "+sess.SessionToken)
-	h.ServeHTTP(list, req)
-	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"channels":[]`) {
-		t.Fatalf("channels %d %s", list.Code, list.Body)
+	loading := got[0]
+	driver := dialWS(t, srv, driverToken, false)
+	driverBox := collectWS(t, driver)
+	prompt := waitLinx(t, driverBox, 1, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-driver", "加入口令 "+loading.JoinCode, "s-join-1"))
+	})
+	if answer := sseAnswer(t, prompt.rec.Body.String()); answer != "请再说一次口令确认。"+speakDigits(loading.JoinCode) {
+		t.Fatalf("prompt %q", answer)
 	}
+	if prompt.fresh[0].Type != "notice" {
+		t.Fatalf("prompt event %#v", prompt.fresh[0])
+	}
+	me := getAuth(t, h, "/api/v1/me", driverToken)
+	if strings.Contains(me.Body.String(), loading.ChannelID) {
+		t.Fatalf("joined before confirm %s", me.Body)
+	}
+
+	joined := waitLinx(t, driverBox, 3, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-driver", "加入口令 "+loading.JoinCode, "s-join-2"))
+	})
+	if answer := sseAnswer(t, joined.rec.Body.String()); answer != "已加入装货" {
+		t.Fatalf("join %q body %s", answer, joined.rec.Body)
+	}
+	if joined.fresh[0].Type != "channel_switched" || joined.fresh[0].ChannelID != loading.ChannelID || joined.fresh[0].Name != "装货" {
+		t.Fatalf("channel_switched %#v", joined.fresh)
+	}
+	if joined.fresh[2].Type != "notice" || joined.fresh[2].Message != "已加入装货" {
+		t.Fatalf("join notice %#v", joined.fresh)
+	}
+
+	captainBox.wait(t, 4)
+	_ = waitLinx(t, captainBox, 3, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-captain", "建一个卸货频道", "s-create-2"))
+	})
+	beforeTalk := len(captainBox.snapshot())
+	if res := postAuth(t, h, "/api/v1/talk/start", captainToken, `{}`); res.Code != http.StatusOK {
+		t.Fatalf("talk %d %s", res.Code, res.Body)
+	}
+	captainBox.wait(t, beforeTalk+2)
+	switched := waitLinx(t, captainBox, 5, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-captain", "切到装货", "s-switch"))
+	})
+	if answer := sseAnswer(t, switched.rec.Body.String()); answer != "已切换到装货" {
+		t.Fatalf("switch %q events %#v", answer, switched.fresh)
+	}
+	talkEndAt, switchAt := -1, -1
+	for i, ev := range switched.fresh {
+		if ev.Type == "talk_end" && ev.UserID == captainID {
+			talkEndAt = i
+		}
+		if ev.Type == "channel_switched" && ev.ChannelID == loading.ChannelID && ev.Name == "装货" {
+			switchAt = i
+		}
+	}
+	if talkEndAt < 0 || switchAt < 0 || talkEndAt > switchAt {
+		t.Fatalf("order talk_end %d switch %d events %#v", talkEndAt, switchAt, switched.fresh)
+	}
+
+	missed := waitLinx(t, captainBox, 1, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-captain", "切到不存在", "s-miss"))
+	})
+	if missed.rec.Code != http.StatusOK {
+		t.Fatalf("miss status %d %s", missed.rec.Code, missed.rec.Body)
+	}
+	if answer := sseAnswer(t, missed.rec.Body.String()); answer != "未匹配到频道" {
+		t.Fatalf("miss %q", answer)
+	}
+	if missed.fresh[0].Type != "error" || missed.fresh[0].Message != "未匹配到频道" {
+		t.Fatalf("miss event %#v", missed.fresh)
+	}
+	still := getAuth(t, h, "/api/v1/me", captainToken)
+	if !strings.Contains(still.Body.String(), loading.ChannelID) {
+		t.Fatalf("left channel after miss %s", still.Body)
+	}
+
+	started := waitLinx(t, captainBox, 3, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-captain", "开始对讲", "s-talk"))
+	})
+	if answer := sseAnswer(t, started.rec.Body.String()); answer != "已开始对讲" {
+		t.Fatalf("talk_start %q events %#v", answer, started.fresh)
+	}
+	var talkStart wsEvent
+	for _, ev := range started.fresh {
+		if ev.Type == "talk_start" {
+			talkStart = ev
+		}
+	}
+	if talkStart.ChannelID != loading.ChannelID || talkStart.UserID != captainID {
+		t.Fatalf("talk_start event %#v", started.fresh)
+	}
+
+	beforeList := len(driverBox.snapshot())
+	listed := postLinx(t, h, token, linxBody("device-captain", "我有哪些频道", "s-list"))
+	listAnswer := sseAnswer(t, listed.Body.String())
+	if !strings.Contains(listAnswer, "装货") || !strings.Contains(listAnswer, "卸货") || !strings.Contains(listAnswer, "当前是装货") {
+		t.Fatalf("list %q", listAnswer)
+	}
+	driverBox.wait(t, beforeList+2)
+
+	byName := waitLinx(t, driverBox, 3, func() *httptest.ResponseRecorder {
+		return postLinx(t, h, token, linxBody("device-driver", "进入卸货", "s-name"))
+	})
+	if answer := sseAnswer(t, byName.rec.Body.String()); answer != "已加入卸货" {
+		t.Fatalf("name join %q events %#v", answer, byName.fresh)
+	}
+	if byName.fresh[0].Type != "channel_switched" || byName.fresh[0].Name != "卸货" {
+		t.Fatalf("name switch %#v", byName.fresh)
+	}
+
+	_ = captain.Close(websocket.StatusNormalClosure, "")
+	_ = driver.Close(websocket.StatusNormalClosure, "")
+}
+
+type linxWait struct {
+	rec   *httptest.ResponseRecorder
+	fresh []wsEvent
+}
+
+func waitLinx(t *testing.T, box *wsBox, n int, fn func() *httptest.ResponseRecorder) linxWait {
+	t.Helper()
+	before := len(box.snapshot())
+	rec := fn()
+	box.wait(t, before+n)
+	all := box.snapshot()
+	if len(all) < before+n {
+		t.Fatalf("events %d want %d", len(all), before+n)
+	}
+	return linxWait{rec: rec, fresh: all[before : before+n]}
+}
+
+func sseAnswer(t *testing.T, body string) string {
+	t.Helper()
+	events := parseSSE(t, body)
+	details, _ := events[0]["details"].(map[string]any)
+	answer, _ := details["answer"].(string)
+	if answer == "" {
+		t.Fatalf("missing answer %s", body)
+	}
+	return answer
+}
+
+func speakDigits(code string) string {
+	parts := make([]string, 0, len(code))
+	for _, r := range code {
+		parts = append(parts, string(r))
+	}
+	return "口令是 " + strings.Join(parts, "、")
 }
 
 func postLinx(t *testing.T, h http.Handler, token, body string) *httptest.ResponseRecorder {

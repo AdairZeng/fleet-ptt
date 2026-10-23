@@ -184,6 +184,24 @@ button.end {
   background: #1f2937;
 }
 
+.command-bar {
+  margin-top: 1.75rem;
+}
+
+button.command {
+  width: 100%;
+  margin-top: 0;
+  background: #0f766e;
+}
+
+button.command.on {
+  background: #115e59;
+}
+
+.command-bar .hint {
+  margin-top: 0.75rem;
+}
+
 .channel-list ul {
   list-style: none;
   margin: 0.75rem 0 0;

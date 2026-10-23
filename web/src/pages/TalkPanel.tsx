@@ -23,6 +23,8 @@ export function TalkPanel({
   subscribe,
   stopUplinkRef,
   leaveRoomRef,
+  commanding,
+  onVoiceUplink,
 }: {
   session: Session
   channelId: string
@@ -30,6 +32,8 @@ export function TalkPanel({
   subscribe: (listener: (event: SignalEvent) => void) => () => void
   stopUplinkRef: { current: () => Promise<void> }
   leaveRoomRef: { current: () => Promise<void> }
+  commanding: boolean
+  onVoiceUplink: () => void
 }) {
   const [view, setView] = useState<View>('joining')
   const [talk, setTalk] = useState<TalkPhase>('out')
@@ -163,6 +167,7 @@ export function TalkPanel({
     if (!observed.follow) {
       return
     }
+    onVoiceUplink()
     const gen = ++generation.current
     wantRef.current = true
     setError('')
@@ -277,7 +282,7 @@ export function TalkPanel({
   }, [session, channelId, attempt])
 
   function press(fromKeyboard = false) {
-    if (viewRef.current !== 'ready' || holdRef.current) {
+    if (commanding || viewRef.current !== 'ready' || holdRef.current) {
       return
     }
     const room = roomRef.current
@@ -342,7 +347,7 @@ export function TalkPanel({
     <section className="talk">
       <h2>对讲</h2>
       <p className="talk-status" role="status">
-        {statusText(view, talk)}
+        {statusText(view, talk, commanding)}
       </p>
       {error ? <p className="error">{error}</p> : null}
       <div className="speakers" aria-live="polite">
@@ -365,7 +370,7 @@ export function TalkPanel({
         <button
           type="button"
           className={talking ? 'ptt talking' : 'ptt'}
-          disabled={!joined}
+          disabled={!joined || commanding}
           aria-pressed={talking}
           onPointerDown={onPointerDown}
           onPointerUp={release}
@@ -415,7 +420,10 @@ export function TalkPanel({
   )
 }
 
-function statusText(view: View, talk: TalkPhase): string {
+function statusText(view: View, talk: TalkPhase, commanding: boolean): string {
+  if (commanding && view !== 'error') {
+    return '指令中'
+  }
   if (view === 'joining') {
     return '正在进入频道，只收听…'
   }

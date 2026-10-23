@@ -22,6 +22,20 @@ h1 {
   margin: 0 0 0.5rem;
 }
 
+h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+section {
+  margin-top: 1.75rem;
+}
+
+section form {
+  margin-top: 0.75rem;
+}
+
 p {
   margin: 0;
 }
@@ -87,6 +101,30 @@ p.hint {
   margin-top: 0.75rem;
 }
 
+p.channel-name {
+  margin-top: 0.35rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+p.kicker {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+p.join-code {
+  width: fit-content;
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.85rem;
+  border: 1px dashed #c5c8d0;
+  border-radius: 0.5rem;
+  font-family: ui-monospace, monospace;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.35rem;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     background: #14161c;
@@ -100,6 +138,10 @@ p.hint {
   }
 
   button.secondary {
+    border-color: #3a3f4b;
+  }
+
+  p.join-code {
     border-color: #3a3f4b;
   }
 

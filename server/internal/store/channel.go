@@ -1,0 +1,177 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+// Channel 是 channels 表的一行。id 同时预留给以后的 RTN roomName。
+type Channel struct {
+	ID        string
+	Name      string
+	JoinCode  string
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+// CreateChannel 写入频道、创建者的 owner 成员，并把创建者的当前频道切过去。
+// 口令已存在时返回 ErrJoinCodeTaken，不会留下半截数据。
+func (s *Store) CreateChannel(ctx context.Context, ch Channel, role string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var taken int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM channels WHERE join_code = ?`, ch.JoinCode).Scan(&taken)
+	if err == nil {
+		return ErrJoinCodeTaken
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO channels (id, name, join_code, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		ch.ID, ch.Name, ch.JoinCode, ch.CreatedBy, ch.CreatedAt.Unix())
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO memberships (user_id, channel_id, role)
+		VALUES (?, ?, ?)`,
+		ch.CreatedBy, ch.ID, role); err != nil {
+		return err
+	}
+	if err := setCurrentChannel(ctx, tx, ch.CreatedBy, ch.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ChannelByJoinCode 按已规范化的口令精确查找。
+func (s *Store) ChannelByJoinCode(ctx context.Context, code string) (Channel, error) {
+	const q = `SELECT id, name, join_code, created_by, created_at FROM channels WHERE join_code = ?`
+	return scanChannel(s.db.QueryRowContext(ctx, q, code))
+}
+
+// ChannelsByName 按展示名精确匹配。同名频道可以有多条。
+func (s *Store) ChannelsByName(ctx context.Context, name string) ([]Channel, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, join_code, created_by, created_at
+		FROM channels
+		WHERE name = ?
+		ORDER BY created_at, id`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Channel
+	for rows.Next() {
+		ch, err := scanChannel(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ch)
+	}
+	return out, rows.Err()
+}
+
+// JoinChannel 把用户加入频道并设为当前频道。
+// 已经是成员时保留原来的角色，避免 owner 再次加入被降成 member。
+// 频道不存在时返回 ErrNotFound。
+func (s *Store) JoinChannel(ctx context.Context, userID, channelID, role string) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM channels WHERE id = ?`, channelID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO memberships (user_id, channel_id, role)
+		VALUES (?, ?, ?)
+		ON CONFLICT(user_id, channel_id) DO NOTHING`,
+		userID, channelID, role); err != nil {
+		return "", err
+	}
+	var got string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT role FROM memberships WHERE user_id = ? AND channel_id = ?`,
+		userID, channelID).Scan(&got); err != nil {
+		return "", err
+	}
+	if err := setCurrentChannel(ctx, tx, userID, channelID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return got, nil
+}
+
+// CurrentChannel 返回用户当前频道及其角色。还没有当前频道时返回 ErrNotFound。
+func (s *Store) CurrentChannel(ctx context.Context, userID string) (Channel, string, error) {
+	const q = `
+		SELECT c.id, c.name, c.join_code, c.created_by, c.created_at, m.role
+		FROM user_session AS us
+		JOIN channels AS c ON c.id = us.current_channel_id
+		JOIN memberships AS m ON m.channel_id = c.id AND m.user_id = us.user_id
+		WHERE us.user_id = ?`
+	var ch Channel
+	var created int64
+	var role string
+	err := s.db.QueryRowContext(ctx, q, userID).Scan(
+		&ch.ID, &ch.Name, &ch.JoinCode, &ch.CreatedBy, &created, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Channel{}, "", ErrNotFound
+	}
+	if err != nil {
+		return Channel{}, "", err
+	}
+	ch.CreatedAt = time.Unix(created, 0).UTC()
+	return ch, role, nil
+}
+
+type queryRow interface {
+	Scan(dest ...any) error
+}
+
+func scanChannel(row queryRow) (Channel, error) {
+	var ch Channel
+	var created int64
+	err := row.Scan(&ch.ID, &ch.Name, &ch.JoinCode, &ch.CreatedBy, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Channel{}, ErrNotFound
+	}
+	if err != nil {
+		return Channel{}, err
+	}
+	ch.CreatedAt = time.Unix(created, 0).UTC()
+	return ch, nil
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func setCurrentChannel(ctx context.Context, ex execer, userID, channelID string) error {
+	_, err := ex.ExecContext(ctx, `
+		INSERT INTO user_session (user_id, current_channel_id, talking)
+		VALUES (?, ?, 0)
+		ON CONFLICT(user_id) DO UPDATE SET current_channel_id = excluded.current_channel_id`,
+		userID, channelID)
+	return err
+}

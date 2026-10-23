@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,12 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
 
 func TestHealthz(t *testing.T) {
-	h := newHandler(filepath.Join(t.TempDir(), "missing"), testService(t))
+	users, channels := testDeps(t)
+	h := newHandler(filepath.Join(t.TempDir(), "missing"), users, channels)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -46,7 +49,8 @@ func TestStaticSite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newHandler(dir, testService(t))
+	users, channels := testDeps(t)
+	h := newHandler(dir, users, channels)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
@@ -72,7 +76,8 @@ func TestSessionNotShadowedByStatic(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := newHandler(dir, testService(t))
+	users, channels := testDeps(t)
+	h := newHandler(dir, users, channels)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"老王","device_id":"device-1"}`))
@@ -85,12 +90,45 @@ func TestSessionNotShadowedByStatic(t *testing.T) {
 	}
 }
 
-func testService(t *testing.T) *user.Service {
+func TestChannelNotShadowedByStatic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	users, channels := testDeps(t)
+	h := newHandler(dir, users, channels)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"队长","device_id":"device-1"}`))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body)
+	}
+	var sess struct {
+		SessionToken string `json:"session_token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/channels", strings.NewReader(`{"name":"装货"}`))
+	req.Header.Set("Authorization", "Bearer "+sess.SessionToken)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "home") || !strings.Contains(rec.Body.String(), `"join_code"`) {
+		t.Fatalf("body %s", rec.Body)
+	}
+}
+
+func testDeps(t *testing.T) (*user.Service, *channel.Service) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "fleet.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	return &user.Service{Store: st, Secret: "test-secret"}
+	return &user.Service{Store: st, Secret: "test-secret"}, &channel.Service{Store: st}
 }

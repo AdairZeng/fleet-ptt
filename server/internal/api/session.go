@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
 
-// Register 挂上会话与当前用户接口。
-func Register(mux *http.ServeMux, svc *user.Service) {
-	mux.HandleFunc("POST /api/v1/session", CreateSession(svc))
-	mux.HandleFunc("GET /api/v1/me", Me(svc))
+// Register 挂上会话、当前用户，以及频道创建 / 加入接口。
+func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service) {
+	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
+	mux.HandleFunc("GET /api/v1/me", Me(users, channels))
+	mux.HandleFunc("POST /api/v1/channels", CreateChannel(users, channels))
+	mux.HandleFunc("POST /api/v1/channels/join", JoinChannel(users, channels))
 }
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。
@@ -40,19 +43,31 @@ func CreateSession(svc *user.Service) http.HandlerFunc {
 	}
 }
 
-// Me 用 Bearer session_token 返回已绑定的用户，供进入后的页面确认身份。
-func Me(svc *user.Service) http.HandlerFunc {
+// Me 用 Bearer session_token 返回已绑定的用户。已有当前频道时一并返回。
+func Me(users *user.Service, channels *channel.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u, err := UserFromRequest(svc, r)
-		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, errorBody(user.ErrUnauthorized.Error()))
+		u, ok := requireUser(users, w, r)
+		if !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"user_id":   u.ID,
-			"nickname":  u.DisplayName,
-			"device_id": u.DeviceID,
-		})
+		body := meBody{
+			UserID:   u.ID,
+			Nickname: u.DisplayName,
+			DeviceID: u.DeviceID,
+		}
+		current, err := channels.Current(r.Context(), u.ID)
+		if errors.Is(err, channel.ErrNoCurrent) {
+			writeJSON(w, http.StatusOK, body)
+			return
+		}
+		if err != nil {
+			log.Printf("me: %v", err)
+			writeJSON(w, http.StatusInternalServerError, errorBody("读取当前频道失败"))
+			return
+		}
+		ch := channelBodyFrom(current)
+		body.Channel = &ch
+		writeJSON(w, http.StatusOK, body)
 	}
 }
 

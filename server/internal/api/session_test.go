@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/api"
+	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
@@ -105,7 +106,7 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, dest any) {
 
 func newMux(svc *user.Service) http.Handler {
 	mux := http.NewServeMux()
-	api.Register(mux, svc)
+	api.Register(mux, svc, &channel.Service{Store: svc.Store})
 	return mux
 }
 

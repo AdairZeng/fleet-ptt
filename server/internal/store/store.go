@@ -1,4 +1,4 @@
-// Package store 用 SQLite 保存用户，并以 device_id 作为身份键。
+// Package store 用 SQLite 保存用户、频道与成员，并以 device_id 作为用户身份键。
 package store
 
 import (
@@ -13,8 +13,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// ErrNotFound 表示没有匹配的用户。
-var ErrNotFound = errors.New("user not found")
+// ErrNotFound 表示没有匹配的用户、频道或当前频道。
+var ErrNotFound = errors.New("not found")
+
+// ErrJoinCodeTaken 表示口令已被其他频道占用。
+var ErrJoinCodeTaken = errors.New("join code taken")
 
 // User 是 users 表的一行。
 type User struct {
@@ -29,8 +32,8 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open 打开（必要时创建）数据库并迁移 users 表。
-// 表结构对应技术方案 §4.1：id、display_name、device_id UNIQUE、created_at。
+// Open 打开（必要时创建）数据库并迁移表结构。
+// 表对应技术方案 §4.1：users、channels、memberships、user_session。
 func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("sqlite path is empty")
@@ -61,14 +64,39 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS users (
+	// 表结构对应技术方案 §4.1。user_session 记录当前频道，口令过期与 talking 流程不在这里。
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,
 			display_name TEXT NOT NULL,
 			device_id TEXT NOT NULL UNIQUE,
 			created_at INTEGER NOT NULL
-		)`)
-	return err
+		)`,
+		`CREATE TABLE IF NOT EXISTS channels (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			join_code TEXT NOT NULL UNIQUE,
+			created_by TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS memberships (
+			user_id TEXT NOT NULL,
+			channel_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			PRIMARY KEY (user_id, channel_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_session (
+			user_id TEXT PRIMARY KEY,
+			current_channel_id TEXT,
+			talking INTEGER NOT NULL DEFAULT 0
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // UpsertUser 按 device_id 绑定用户。

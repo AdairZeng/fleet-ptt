@@ -1,0 +1,116 @@
+package store_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/AdairZeng/fleet-ptt/server/internal/store"
+)
+
+func TestCreateChannelAndJoin(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Unix(1_700_000_200, 0).UTC()
+
+	captain, err := st.UpsertUser(ctx, "captain", "队长", "device-captain", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, err := st.UpsertUser(ctx, "driver", "司机", "device-driver", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loading := store.Channel{
+		ID: "ch-1", Name: "装货", JoinCode: "3842K9",
+		CreatedBy: captain.ID, CreatedAt: now,
+	}
+	if err := st.CreateChannel(ctx, loading, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ChannelByJoinCode(ctx, "3842K9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != loading.ID || got.Name != "装货" || got.CreatedBy != captain.ID || !got.CreatedAt.Equal(now) {
+		t.Fatalf("channel %+v", got)
+	}
+	current, role, err := st.CurrentChannel(ctx, captain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ID != loading.ID || role != "owner" {
+		t.Fatalf("current %s role %s", current.ID, role)
+	}
+
+	dup := loading
+	dup.ID = "ch-dup"
+	if err := st.CreateChannel(ctx, dup, "owner"); !errors.Is(err, store.ErrJoinCodeTaken) {
+		t.Fatalf("duplicate code err %v", err)
+	}
+	current, _, err = st.CurrentChannel(ctx, captain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ID != loading.ID {
+		t.Fatalf("failed insert changed current channel to %s", current.ID)
+	}
+
+	other := store.Channel{
+		ID: "ch-2", Name: "装货", JoinCode: "5555AB",
+		CreatedBy: captain.ID, CreatedAt: now.Add(time.Second),
+	}
+	if err := st.CreateChannel(ctx, other, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	names, err := st.ChannelsByName(ctx, "装货")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 || names[0].ID != loading.ID || names[1].ID != other.ID {
+		t.Fatalf("names %+v", names)
+	}
+
+	role, err = st.JoinChannel(ctx, driver.ID, loading.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role != "member" {
+		t.Fatalf("driver role %s", role)
+	}
+	current, role, err = st.CurrentChannel(ctx, driver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ID != loading.ID || role != "member" {
+		t.Fatalf("driver current %s role %s", current.ID, role)
+	}
+
+	role, err = st.JoinChannel(ctx, captain.ID, loading.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role != "owner" {
+		t.Fatalf("owner downgraded to %s", role)
+	}
+
+	if _, err := st.JoinChannel(ctx, driver.ID, "missing-channel", "member"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing channel err %v", err)
+	}
+	current, _, err = st.CurrentChannel(ctx, driver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ID != loading.ID {
+		t.Fatalf("failed join changed current channel to %s", current.ID)
+	}
+
+	if _, err := st.ChannelByJoinCode(ctx, "NOCODE"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing code err %v", err)
+	}
+	if _, _, err := st.CurrentChannel(ctx, "missing-user"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing current err %v", err)
+	}
+}

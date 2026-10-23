@@ -10,6 +10,7 @@ import (
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
+	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 	"github.com/AdairZeng/fleet-ptt/server/internal/ws"
 )
@@ -20,6 +21,7 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	hub := ws.NewHub(users, channels)
 	gate := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
+	mux.HandleFunc("POST /api/v1/device/register", RegisterDevice(users))
 	mux.HandleFunc("POST /api/v1/device/session", CreateDeviceSession(users))
 	mux.HandleFunc("GET /api/v1/me", Me(users, channels))
 	mux.HandleFunc("GET /api/v1/channels", ListChannels(users, channels))
@@ -34,46 +36,47 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 }
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。
-func CreateSession(svc *user.Service) http.HandlerFunc {
+// CreateSession keeps the endpoint but requires the same device proof as device/session.
+func CreateSession(svc *user.Service) http.HandlerFunc { return CreateDeviceSession(svc) }
+
+func RegisterDevice(svc *user.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Nickname string `json:"nickname"`
-			DeviceID string `json:"device_id"`
+		var owner *store.User
+		if r.Header.Get("Authorization") != "" {
+			u, ok := requireUser(svc, w, r)
+			if !ok {
+				return
+			}
+			owner = &u
 		}
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
-		if err := dec.Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, errorBody("请求格式无效"))
-			return
-		}
-		sess, err := svc.Enter(r.Context(), req.Nickname, req.DeviceID, time.Now())
+		credential, err := svc.RegisterDevice(r.Context(), owner, time.Now())
 		if err != nil {
 			writeEnterError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"user_id":       sess.User.ID,
-			"session_token": sess.Token,
-		})
+		writeJSON(w, http.StatusOK, credential)
 	}
 }
 
 func CreateDeviceSession(svc *user.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Nickname     string `json:"nickname"`
-			DeviceID     string `json:"device_id"`
-			LinxDeviceID string `json:"linx_device_id"`
+			Nickname   string `json:"nickname"`
+			DeviceID   string `json:"device_id"`
+			Credential string `json:"device_credential"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, errorBody("请求格式无效"))
+		if !decodeJSON(w, r, &req) {
 			return
 		}
-		sess, err := svc.EnterDevice(r.Context(), req.Nickname, req.DeviceID, req.LinxDeviceID, time.Now())
+		sess, err := svc.DeviceSession(r.Context(), req.Nickname, req.DeviceID, req.Credential, time.Now())
 		if err != nil {
 			writeEnterError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"user_id": sess.User.ID, "session_token": sess.Token, "device_id": sess.Device.DeviceID, "linx_device_id": sess.Device.LinxDeviceID})
+		writeJSON(w, http.StatusOK, map[string]string{
+			"user_id": sess.User.ID, "session_token": sess.Token,
+			"device_id": sess.User.DeviceID, "nickname": sess.User.DisplayName,
+		})
 	}
 }
 
@@ -112,6 +115,8 @@ func writeEnterError(w http.ResponseWriter, err error) {
 	case errors.Is(err, user.ErrNoSecret):
 		log.Printf("session: %v", err)
 		writeJSON(w, http.StatusInternalServerError, errorBody(err.Error()))
+	case errors.Is(err, user.ErrUnauthorized):
+		writeJSON(w, http.StatusUnauthorized, errorBody(err.Error()))
 	case errors.Is(err, user.ErrDeviceBinding):
 		writeJSON(w, http.StatusConflict, errorBody(err.Error()))
 	default:

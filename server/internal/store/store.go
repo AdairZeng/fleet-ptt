@@ -28,11 +28,12 @@ type User struct {
 }
 
 type Device struct {
-	DeviceID      string
-	UserID        string
-	LinxDeviceID  string
-	BoundAt       time.Time
-	LastConnected time.Time
+	DeviceID       string
+	UserID         string
+	LinxDeviceID   string
+	CredentialHash string
+	BoundAt        time.Time
+	LastConnected  time.Time
 }
 
 // Store 是单个 SQLite 连接。
@@ -102,9 +103,11 @@ func (s *Store) migrate() error {
 			device_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
 			linx_device_id TEXT NOT NULL DEFAULT '',
+			credential_hash TEXT NOT NULL DEFAULT '',
 			bound_at INTEGER NOT NULL,
 			last_connected INTEGER NOT NULL
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS devices_linx_id ON devices(linx_device_id) WHERE linx_device_id <> ''`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -114,24 +117,14 @@ func (s *Store) migrate() error {
 	return nil
 }
 
-func (s *Store) UpsertDevice(ctx context.Context, deviceID, userID, linxDeviceID string, now time.Time) (Device, error) {
-	const q = `INSERT INTO devices (device_id, user_id, linx_device_id, bound_at, last_connected)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(device_id) DO UPDATE SET user_id = excluded.user_id,
-		linx_device_id = CASE WHEN excluded.linx_device_id <> '' THEN excluded.linx_device_id ELSE devices.linx_device_id END,
-		last_connected = excluded.last_connected
-		RETURNING device_id, user_id, linx_device_id, bound_at, last_connected`
-	return scanDevice(s.db.QueryRowContext(ctx, q, deviceID, userID, linxDeviceID, now.Unix(), now.Unix()))
-}
-
 func (s *Store) DeviceByID(ctx context.Context, deviceID string) (Device, error) {
-	return scanDevice(s.db.QueryRowContext(ctx, `SELECT device_id, user_id, linx_device_id, bound_at, last_connected FROM devices WHERE device_id = ?`, deviceID))
+	return scanDevice(s.db.QueryRowContext(ctx, `SELECT device_id, user_id, linx_device_id, credential_hash, bound_at, last_connected FROM devices WHERE device_id = ?`, deviceID))
 }
 
 func scanDevice(row *sql.Row) (Device, error) {
 	var d Device
 	var bound, connected int64
-	err := row.Scan(&d.DeviceID, &d.UserID, &d.LinxDeviceID, &bound, &connected)
+	err := row.Scan(&d.DeviceID, &d.UserID, &d.LinxDeviceID, &d.CredentialHash, &bound, &connected)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Device{}, ErrNotFound
 	}

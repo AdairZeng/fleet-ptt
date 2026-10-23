@@ -7,10 +7,8 @@ import {
 } from './device/controller.ts'
 import { ChannelPage } from './pages/ChannelPage.tsx'
 import { NicknamePage } from './pages/NicknamePage.tsx'
-import { getOrCreateDeviceID } from './state/device.ts'
 import { readJoinLocation } from './state/joinLink.ts'
 import {
-  clearSession,
   createSession,
   loadSession,
   saveSession,
@@ -18,22 +16,22 @@ import {
 } from './state/session.ts'
 
 export default function App() {
-  const [deviceID] = useState(getOrCreateDeviceID)
   const [session, setSession] = useState<Session | null>(loadSession)
+  const [editingNickname, setEditingNickname] = useState(false)
   const [device, dispatchDevice] = useReducer(reduceDevice, initialDeviceSnapshot)
   const controls = useRef<(action: DeviceAction) => void>(() => {})
   const reportDevice = useCallback((event: DeviceEvent) => dispatchDevice(event), [])
   const [joinRequest] = useState(() => readJoinLocation(window.location))
 
   async function enter(nickname: string) {
-    const next = await createSession(nickname, deviceID)
+    const next = await createSession(nickname, session)
     saveSession(next)
     setSession(next)
+    setEditingNickname(false)
   }
 
   function changeNickname() {
-    clearSession()
-    setSession(null)
+    setEditingNickname(true)
   }
 
   useEffect(() => {
@@ -44,7 +42,7 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [device.phase])
 
-  const screen = !device.powered ? <p>已关机</p> : device.phase === 'booting' ? <p>启动中…</p> : !session ? (
+  const screen = !device.powered ? <p>已关机</p> : device.phase === 'booting' ? <p>启动中…</p> : !session || editingNickname ? (
     <NicknamePage onEnter={enter} joinRequest={joinRequest} />
   ) : (
     <ChannelPage session={session} onChangeNickname={changeNickname} joinRequest={joinRequest} deviceControls={controls} onDeviceEvent={reportDevice} />

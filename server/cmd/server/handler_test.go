@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
@@ -87,7 +89,7 @@ func TestSessionNotShadowedByStatic(t *testing.T) {
 	h := newHandler(dir, users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"老王","device_id":"device-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "老王", "device-1")))
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
@@ -106,7 +108,7 @@ func TestChannelNotShadowedByStatic(t *testing.T) {
 	h := newHandler(dir, users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"队长","device_id":"device-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "队长", "device-1")))
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("session %d %s", rec.Code, rec.Body)
@@ -143,7 +145,7 @@ func TestRoomTokenNotShadowedByStatic(t *testing.T) {
 	}, "")
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"队长","device_id":"device-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "队长", "device-1")))
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("session %d %s", rec.Code, rec.Body)
@@ -212,7 +214,7 @@ func TestLinxChatNotShadowedByStatic(t *testing.T) {
 	h := newHandler(dir, users, channels, rtn.Signer{}, "linx-test-token")
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"老王","device_id":"device-linx"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "老王", "device-linx")))
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("session %d %s", rec.Code, rec.Body)
@@ -252,4 +254,24 @@ func testDeps(t *testing.T) (*user.Service, *channel.Service) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return &user.Service{Store: st, Secret: "test-secret"}, &channel.Service{Store: st}
+}
+
+func deviceSessionBody(t *testing.T, users *user.Service, nickname, deviceID string) string {
+	t.Helper()
+	legacy, err := users.Enter(context.Background(), nickname, deviceID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := users.RegisterDevice(context.Background(), &legacy.User, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := users.Store.BindLinxDevice(context.Background(), deviceID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]string{"nickname": nickname, "device_id": deviceID, "device_credential": credential.Credential})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }

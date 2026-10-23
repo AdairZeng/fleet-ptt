@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/api"
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
@@ -84,14 +85,39 @@ func TestSessionBadRequest(t *testing.T) {
 	}
 	for _, body := range cases {
 		res := postSession(t, h, body)
-		if res.Code != http.StatusBadRequest {
+		if res.Code != http.StatusBadRequest && res.Code != http.StatusUnauthorized {
 			t.Fatalf("body %s status %d", body, res.Code)
 		}
 	}
 }
 
+// Existing scenario fixtures retain their legacy device labels and migrate using
+// server-side setup. Requests to the production handler always carry proof.
 func postSession(t *testing.T, h http.Handler, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	var reqBody struct {
+		Nickname string `json:"nickname"`
+		DeviceID string `json:"device_id"`
+	}
+	if json.Unmarshal([]byte(body), &reqBody) == nil && reqBody.Nickname != "" && reqBody.DeviceID != "" {
+		fixture := h.(*fixtureMux)
+		legacy, err := fixture.users.Enter(context.Background(), reqBody.Nickname, reqBody.DeviceID, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := fixture.users.RegisterDevice(context.Background(), &legacy.User, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.users.Store.BindLinxDevice(context.Background(), proof.DeviceID, reqBody.DeviceID); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(map[string]string{"nickname": reqBody.Nickname, "device_id": proof.DeviceID, "device_credential": proof.Credential})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = string(raw)
+	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewBufferString(body))
 	h.ServeHTTP(rec, req)
@@ -120,7 +146,12 @@ func newMuxWithSigner(svc *user.Service, signer rtn.Signer) http.Handler {
 func newMuxWithLinx(svc *user.Service, signer rtn.Signer, linxToken string) http.Handler {
 	mux := http.NewServeMux()
 	api.Register(mux, svc, &channel.Service{Store: svc.Store}, signer, linxToken)
-	return mux
+	return &fixtureMux{Handler: mux, users: svc}
+}
+
+type fixtureMux struct {
+	http.Handler
+	users *user.Service
 }
 
 func newService(t *testing.T) *user.Service {

@@ -45,10 +45,7 @@ type Session struct {
 
 // Enter 校验昵称与 device_id，按设备 upsert 用户，并签发 session_token。
 func (s *Service) Enter(ctx context.Context, nickname, deviceID string, now time.Time) (Session, error) {
-	return s.EnterDevice(ctx, nickname, deviceID, "", now)
-}
 
-func (s *Service) EnterDevice(ctx context.Context, nickname, deviceID, linxDeviceID string, now time.Time) (Session, error) {
 	nickname = strings.TrimSpace(nickname)
 	deviceID = strings.TrimSpace(deviceID)
 	if !validNickname(nickname) {
@@ -68,22 +65,11 @@ func (s *Service) EnterDevice(ctx context.Context, nickname, deviceID, linxDevic
 	if err != nil {
 		return Session{}, err
 	}
-	d, err := s.Store.DeviceByID(ctx, deviceID)
-	if err == nil && d.UserID != u.ID {
-		return Session{}, ErrDeviceBinding
-	}
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return Session{}, err
-	}
-	d, err = s.Store.UpsertDevice(ctx, deviceID, u.ID, strings.TrimSpace(linxDeviceID), now.UTC())
-	if err != nil {
-		return Session{}, err
-	}
 	token, err := sign(s.Secret, u.ID, now.UTC())
 	if err != nil {
 		return Session{}, err
 	}
-	return Session{User: u, Device: d, Token: token}, nil
+	return Session{User: u, Token: token}, nil
 }
 
 func (s *Service) DeviceByID(ctx context.Context, deviceID string) (store.Device, error) {

@@ -1,3 +1,5 @@
+import { loadDeviceCredential, registerDevice } from './device.ts'
+
 const sessionKey = 'fleet-ptt.session'
 
 export type Session = {
@@ -65,11 +67,12 @@ export function authHeaders(session: Session | null): Headers {
   return headers
 }
 
-export async function createSession(nickname: string, deviceID: string, linxDeviceID = ''): Promise<Session> {
+export async function createSession(nickname: string, previous = loadSession()): Promise<Session> {
+  const credential = loadDeviceCredential() ?? await registerDevice(previous?.session_token)
   const res = await fetch('/api/v1/device/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nickname, device_id: deviceID, linx_device_id: linxDeviceID }),
+    body: JSON.stringify({ nickname, ...credential }),
   })
   const body = (await readBody(res)) as ErrorBody & Partial<Session>
   if (!res.ok || !body.user_id || !body.session_token) {
@@ -78,8 +81,8 @@ export async function createSession(nickname: string, deviceID: string, linxDevi
   return {
     user_id: body.user_id,
     session_token: body.session_token,
-    nickname,
-    device_id: body.device_id || deviceID,
+    nickname: body.nickname || nickname,
+    device_id: body.device_id || credential.device_id,
     linx_device_id: body.linx_device_id || undefined,
   }
 }

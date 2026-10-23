@@ -86,7 +86,12 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
         }
       })
 
-      await client.join(token)
+      try {
+        await client.join(token)
+      } catch (error) {
+        await client.leave().catch(() => {})
+        throw error
+      }
       for (const user of client.remoteUsers) {
         const pending = user.getAudioTracks().filter((track) => track.trackID && !track.isSubscribed())
         if (pending.length > 0) {
@@ -139,14 +144,24 @@ function toRemoteAudio(
     play() {
       const holder = document.createElement('div')
       sink.append(holder)
-      void track.play(holder).catch((err: unknown) => {
-        onPlayError(err)
+      let stopped = false
+      const stop = () => {
+        stopped = true
+        const media = track.mediaElement
+        if (media) {
+          media.pause()
+          media.srcObject = null
+        }
+        holder.remove()
+      }
+      void track.play(holder).then(() => {
+        if (stopped) stop()
+      }, (err: unknown) => {
+        if (!stopped) onPlayError(err)
       })
       return {
         setVolume(volume: number) { track.setVolume(volume) },
-        stop() {
-          holder.remove()
-        },
+        stop,
       }
     },
   }

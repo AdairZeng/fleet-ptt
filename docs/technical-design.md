@@ -214,27 +214,30 @@ sequenceDiagram
 
 ### 8.2 设备 WebSocket
 
-设备连接：`/api/v1/device/ws`。连接使用设备会话凭证，动作包含 `action_id` 和目标设备 ID。
+设备连接：`/api/v1/device/ws`。连接使用设备会话凭证，服务端从会话解析并绑定目标设备 ID；浏览器不能指定其他设备目标。动作包含 `action_id`，只发到该设备的活动连接。
 
 服务端向设备发送：
 
 ```json
-{ "type": "action", "action_id": "...", "action": "talk_start" }
+{ "type": "action", "action_id": "...", "action": "talk_start", "channel_id": "..." }
 { "type": "action", "action_id": "...", "action": "talk_end" }
 { "type": "action", "action_id": "...", "action": "switch_channel", "channel_id": "..." }
 { "type": "channel_state", "channel_id": "...", "name": "装货" }
 { "type": "members", "channel_id": "...", "members": [] }
-{ "type": "error", "action_id": "...", "message": "..." }
+{ "type": "action_cancel", "action_id": "..." }
+{ "type": "error", "message": "..." }
 ```
 
 设备向服务端发送：
 
 ```json
-{ "type": "action_result", "action_id": "...", "status": "success", "details": {} }
-{ "type": "action_result", "action_id": "...", "status": "failed", "message": "..." }
-{ "type": "talk_end", "action_id": "..." }
+{ "type": "action_result", "action_id": "...", "success": true }
+{ "type": "action_result", "action_id": "...", "success": false, "message": "..." }
+{ "type": "talk_end" }
 { "type": "ping" }
 ```
+
+`success` 必须为显式布尔值，失败信息使用 `message`。支持 `talk_start`、`talk_end`、`switch_channel`、`set_volume`、`show_join_qr`、`set_nickname`；`set_volume` 和 `set_nickname`通过字符串 `value` 传参，音量范围 0–100。每个设备最多一个待执行动作，服务端 15 秒超时后发送 `action_cancel`。客户端以 `action_id` 复用回执，不重复执行；断线取消本地待执行动作，重连只恢复频道和成员状态。
 
 成员讲话状态只广播给同频道成员；设备动作只发送给目标设备。服务端不以 SSE 写入成功代替设备动作成功。
 

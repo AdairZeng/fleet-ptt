@@ -42,7 +42,7 @@ func TestWebSocketAuth(t *testing.T) {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
-	for _, rawURL := range []string{srv.URL + "/api/v1/ws", srv.URL + "/api/v1/ws?token=not-a-token"} {
+	for _, rawURL := range []string{srv.URL + "/api/v1/device/ws", srv.URL + "/api/v1/device/ws?token=not-a-token"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_, res, err := websocket.Dial(ctx, rawURL, nil)
 		cancel()
@@ -481,7 +481,7 @@ func dialWS(t *testing.T, srv *httptest.Server, token string, header bool) *webs
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	rawURL := srv.URL + "/api/v1/ws"
+	rawURL := srv.URL + "/api/v1/device/ws"
 	var opts *websocket.DialOptions
 	if header {
 		opts = &websocket.DialOptions{

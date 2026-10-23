@@ -178,7 +178,7 @@ export function openSignaling(session: Session, onEvent: (event: SignalEvent) =>
       return
     }
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${location.host}/api/v1/ws?token=${encodeURIComponent(session.session_token)}`
+    const url = `${proto}://${location.host}/api/v1/device/ws?token=${encodeURIComponent(session.session_token)}`
     const ws = new WebSocket(url)
     socket = ws
     ws.onopen = () => {

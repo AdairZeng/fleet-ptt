@@ -31,7 +31,7 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("GET /api/v1/channels/{id}/rtn-token", RoomToken(users, channels, tokens))
 	mux.HandleFunc("POST /api/v1/talk/start", TalkStart(users, hub))
 	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
-	mux.HandleFunc("GET /api/v1/ws", hub.ServeHTTP)
+	mux.HandleFunc("GET /api/v1/device/ws", hub.ServeHTTP)
 	mux.HandleFunc("POST /api/v1/linx/chat", LinxChat(users, channels, hub, gate, linxToken))
 }
 

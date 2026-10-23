@@ -143,6 +143,7 @@ function toRemoteAudio(
         onPlayError(err)
       })
       return {
+        setVolume(volume: number) { track.setVolume(volume) },
         stop() {
           holder.remove()
         },

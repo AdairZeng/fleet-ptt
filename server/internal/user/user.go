@@ -97,6 +97,10 @@ func (s *Service) UserByDeviceID(ctx context.Context, deviceID string) (store.Us
 	return s.Store.UserByDeviceID(ctx, strings.TrimSpace(deviceID))
 }
 
+func ValidNickname(name string) bool {
+	return validNickname(name)
+}
+
 func validNickname(name string) bool {
 	n := 0
 	for _, r := range name {

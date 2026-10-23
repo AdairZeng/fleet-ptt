@@ -15,6 +15,7 @@ export type SignalEvent =
   | { type: 'error'; message: string }
   | { type: 'notice'; message: string }
   | { type: 'pong' }
+  | { type: 'disconnected' }
 
 export type Rosters = Record<string, Member[]>
 
@@ -177,6 +178,7 @@ export function openSignaling(session: Session, onEvent: (event: SignalEvent) =>
       if (closed) {
         return
       }
+      onEvent({ type: 'disconnected' })
       timer = window.setTimeout(connect, delay)
       delay = Math.min(delay * 2, 10000)
     }

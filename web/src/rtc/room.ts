@@ -14,6 +14,7 @@ export type RemoteAudio = {
 }
 
 export type LocalMic = {
+  setMuted(muted: boolean): void
   destroy(): void
 }
 
@@ -45,6 +46,7 @@ export class RtnRoom {
   private published = false
   private want = false
   private closed = false
+  private generation = 0
   private playing = new Map<string, { stop(): void }>()
   private pendingAudio = new Set<string>()
   private speakerTracks = new Map<string, Set<string>>()
@@ -79,8 +81,9 @@ export class RtnRoom {
       throw new Error('已经离开频道')
     }
     this.want = true
+    const generation = this.generation
     return this.enqueue(async () => {
-      if (this.closed || !this.want) {
+      if (this.closed || !this.want || generation !== this.generation) {
         return 'cancelled'
       }
       if (!this.conn) {
@@ -91,7 +94,7 @@ export class RtnRoom {
       }
       if (!this.mic) {
         const mic = await this.transport.createMic()
-        if (this.closed || !this.want) {
+        if (this.closed || !this.want || generation !== this.generation) {
           mic.destroy()
           return 'cancelled'
         }
@@ -100,8 +103,16 @@ export class RtnRoom {
       if (!this.want || !this.conn) {
         return 'cancelled'
       }
-      await this.conn.publish(this.mic)
-      if (this.closed || !this.want) {
+      this.mic.setMuted(false)
+      try {
+        await this.conn.publish(this.mic)
+      } catch (error) {
+        this.mic.setMuted(true)
+        this.mic.destroy()
+        this.mic = null
+        throw error
+      }
+      if (this.closed || !this.want || generation !== this.generation) {
         await this.conn.unpublish(this.mic)
         this.published = false
         return 'cancelled'
@@ -113,6 +124,8 @@ export class RtnRoom {
 
   stopPublish(): Promise<void> {
     this.want = false
+    this.generation += 1
+    this.mic?.setMuted(true)
     return this.enqueue(async () => {
       if (this.published && this.mic && this.conn) {
         await this.conn.unpublish(this.mic)
@@ -124,6 +137,8 @@ export class RtnRoom {
   leave(): Promise<void> {
     this.closed = true
     this.want = false
+    this.generation += 1
+    this.mic?.setMuted(true)
     return this.enqueue(async () => {
       if (this.published && this.mic && this.conn) {
         await this.conn.unpublish(this.mic)

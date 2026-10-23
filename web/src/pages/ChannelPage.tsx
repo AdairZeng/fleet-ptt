@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import type { DeviceAction } from '../device/DeviceShell.tsx'
+import type { DeviceEvent } from '../device/controller.ts'
 import { JoinQR } from './JoinQR.tsx'
 import { ScanJoin } from './ScanJoin.tsx'
 import { TalkPanel, type RoomSnapshot } from './TalkPanel.tsx'
@@ -36,10 +38,14 @@ export function ChannelPage({
   session,
   onChangeNickname,
   joinRequest,
+  deviceControls,
+  onDeviceEvent,
 }: {
   session: Session
   onChangeNickname: () => void
   joinRequest: JoinLink | null
+  deviceControls: { current: (action: DeviceAction) => void }
+  onDeviceEvent: (event: DeviceEvent) => void
 }) {
   const [me, setMe] = useState<Me | null>(null)
   const [identityError, setIdentityError] = useState('')
@@ -67,6 +73,8 @@ export function ChannelPage({
     talk: 'out',
   })
   const [roomChannelID, setRoomChannelID] = useState('')
+  const startUplinkRef = useRef<() => void>(() => {})
+  const commandGeneration = useRef(0)
   const stopUplinkRef = useRef<() => Promise<void>>(async () => {})
   const leaveRoomRef = useRef<() => Promise<void>>(async () => {})
   const switchingRef = useRef(false)
@@ -296,6 +304,7 @@ export function ChannelPage({
   }
 
   async function onCommand() {
+    const generation = ++commandGeneration.current
     const next = commandToggle(commanding)
     if (!next.stopUplink) {
       setCommanding(false)
@@ -304,9 +313,12 @@ export function ChannelPage({
     setArming(true)
     try {
       await stopUplinkRef.current()
+      if (commandGeneration.current !== generation) return
       setCommanding(true)
       setVoiceNotice('')
       setSignalError('')
+    } catch (err) {
+      setSignalError(err instanceof Error ? err.message : '停止发送失败')
     } finally {
       setArming(false)
     }
@@ -319,6 +331,32 @@ export function ChannelPage({
     setRoomChannelID(activeChannelID)
     setRoom({ view: 'joining', talk: 'out' })
   }
+  useEffect(() => {
+    if (inCommand) onDeviceEvent({ type: 'COMMAND_START' })
+    else onDeviceEvent({ type: 'MEDIA_STATE', ready: Boolean(channel) && room.view === 'ready', talking: room.talk === 'talking', failed: Boolean(channel) && room.view === 'error' })
+  }, [channel, inCommand, room, onDeviceEvent])
+
+  useEffect(() => {
+    deviceControls.current = (action) => {
+      if (action === 'ptt-end') {
+        void stopUplinkRef.current().catch(() => {})
+      } else if (action === 'ptt-start' && !inCommand && !busy) {
+        startUplinkRef.current()
+      } else if (action === 'command' && !arming && !busy) {
+        void onCommand()
+      }
+    }
+    return () => { deviceControls.current = () => {} }
+  })
+
+  useEffect(() => () => { commandGeneration.current += 1 }, [])
+
+  useEffect(() => {
+    if (!commanding) return
+    const timer = window.setTimeout(() => setCommanding(false), 30000)
+    return () => window.clearTimeout(timer)
+  }, [commanding])
+
   const presence = channel
     ? talkPresence(room.view, room.talk, inCommand)
     : idlePresence(inCommand)
@@ -385,6 +423,7 @@ export function ChannelPage({
           channelId={channel.channel_id}
           members={roster}
           subscribe={signaling.subscribe}
+          startUplinkRef={startUplinkRef}
           stopUplinkRef={stopUplinkRef}
           leaveRoomRef={leaveRoomRef}
           commanding={inCommand}

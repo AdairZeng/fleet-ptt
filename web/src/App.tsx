@@ -1,13 +1,9 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { DeviceShell, type DeviceAction } from './device/DeviceShell.tsx'
 import {
-  actionEvent,
-  canPerformAction,
   initialDeviceSnapshot,
-  phaseLabel,
   reduceDevice,
-  syncDeviceResources,
-  type DeviceSnapshot,
+  type DeviceEvent,
 } from './device/controller.ts'
 import { ChannelPage } from './pages/ChannelPage.tsx'
 import { NicknamePage } from './pages/NicknamePage.tsx'
@@ -25,11 +21,8 @@ export default function App() {
   const [deviceID] = useState(getOrCreateDeviceID)
   const [session, setSession] = useState<Session | null>(loadSession)
   const [device, dispatchDevice] = useReducer(reduceDevice, initialDeviceSnapshot)
-  const previousDevice = useRef<DeviceSnapshot>(device)
-  const resources = useRef({
-    release: () => {},
-    restore: () => {},
-  })
+  const controls = useRef<(action: DeviceAction) => void>(() => {})
+  const reportDevice = useCallback((event: DeviceEvent) => dispatchDevice(event), [])
   const [joinRequest] = useState(() => readJoinLocation(window.location))
 
   async function enter(nickname: string) {
@@ -44,29 +37,27 @@ export default function App() {
   }
 
   useEffect(() => {
-    syncDeviceResources(previousDevice.current, device, resources.current)
-    previousDevice.current = device
-  }, [device])
-
-  useEffect(() => {
     if (device.phase !== 'booting') return
     const timer = window.setTimeout(() => {
-      dispatchDevice({ type: 'BOOT_READY', hasChannel: Boolean(session) })
+      dispatchDevice({ type: 'BOOT_READY', hasChannel: false })
     }, 250)
     return () => window.clearTimeout(timer)
-  }, [device.phase, session])
+  }, [device.phase])
 
-  const screen = !session ? (
+  const screen = !device.powered ? <p>已关机</p> : device.phase === 'booting' ? <p>启动中…</p> : !session ? (
     <NicknamePage onEnter={enter} joinRequest={joinRequest} />
   ) : (
-    <ChannelPage session={session} onChangeNickname={changeNickname} joinRequest={joinRequest} />
+    <ChannelPage session={session} onChangeNickname={changeNickname} joinRequest={joinRequest} deviceControls={controls} onDeviceEvent={reportDevice} />
   )
   const onDeviceAction = (action: DeviceAction) => {
-    if (!canPerformAction(device, action)) {
+    if (action === 'power') {
+      if (device.powered) controls.current('ptt-end')
+      dispatchDevice({ type: 'POWER_TOGGLE' })
       return
     }
-    dispatchDevice(actionEvent(action, device.phase))
+    if (!device.powered || device.phase === 'booting') return
+    controls.current(action)
   }
-  const status = `${phaseLabel(device.phase)} · 小路${session ? ` · ${session.nickname}` : ''}`
+  const status = `${device.screen} · 小路${session ? ` · ${session.nickname}` : ''}`
   return <DeviceShell status={status} phase={device.phase} onAction={onDeviceAction}>{screen}</DeviceShell>
 }

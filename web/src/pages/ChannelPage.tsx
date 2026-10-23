@@ -39,12 +39,14 @@ import {
 export function ChannelPage({
   session,
   onChangeNickname,
+  onNicknameUpdated,
   joinRequest,
   deviceControls,
   onDeviceEvent,
 }: {
   session: Session
   onChangeNickname: () => void
+  onNicknameUpdated: (nickname: string) => void
   joinRequest: JoinLink | null
   deviceControls: { current: (action: DeviceAction) => void }
   onDeviceEvent: (event: DeviceEvent) => void
@@ -211,11 +213,14 @@ export function ChannelPage({
         setVolume(value / 100)
       } else if (action.action === 'show_join_qr') {
         if (!inviteRef.current || action.channel_id !== channel?.channel_id) throw new Error('当前频道二维码未就绪')
+        const qr = inviteRef.current.querySelector('img')
+        if (!qr?.complete || qr.naturalWidth === 0) throw new Error('二维码尚未生成')
         inviteRef.current.scrollIntoView({ block: 'center' })
       } else if (action.action === 'set_nickname') {
         const profile = await fetchMe(session)
         if (signal.aborted || profile.nickname !== action.value) throw new Error('昵称同步失败')
         setMe(profile)
+        onNicknameUpdated(profile.nickname)
         saveSession({ ...session, nickname: profile.nickname })
       } else if (action.action === 'switch_channel') {
         await stopUplinkRef.current()
@@ -255,6 +260,7 @@ export function ChannelPage({
           return
         }
         setMe(next)
+        onNicknameUpdated(next.nickname)
         const restored = next.channel
         if (restored) {
           setChannel((current) => current ?? toChannel(restored))
@@ -268,7 +274,7 @@ export function ChannelPage({
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [session, onNicknameUpdated])
 
   useEffect(() => {
     if (openedJoinRef.current || !joinRequest?.ok) {

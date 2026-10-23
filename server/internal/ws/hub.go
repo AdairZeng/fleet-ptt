@@ -255,6 +255,16 @@ func (h *Hub) PushText(userID, typ, message string) {
 	h.enqueueUser(userID, encode(errorWire{Type: typ, Message: message}))
 }
 
+// RefreshMembers publishes a profile change to members of the current channel.
+func (h *Hub) RefreshMembers(ctx context.Context, userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	view, err := h.channels.Current(ctx, userID)
+	if err == nil {
+		h.publishMembers(ctx, view.Channel.ID)
+	}
+}
+
 // EndTalk 结束当前用户的对讲。已经不在讲时不重复广播。
 func (h *Hub) EndTalk(ctx context.Context, userID string) (channel.View, error) {
 	ctx = context.WithoutCancel(ctx)

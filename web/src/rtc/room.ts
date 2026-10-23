@@ -10,7 +10,7 @@ export type RemoteTrack = {
 export type RemoteAudio = {
   id: string
   userId: string
-  play(): { stop(): void }
+  play(): { stop(): void; setVolume?(volume: number): void }
 }
 
 export type LocalMic = {
@@ -47,7 +47,8 @@ export class RtnRoom {
   private want = false
   private closed = false
   private generation = 0
-  private playing = new Map<string, { stop(): void }>()
+  private volume = 1
+  private playing = new Map<string, { stop(): void; setVolume?(volume: number): void }>()
   private pendingAudio = new Set<string>()
   private speakerTracks = new Map<string, Set<string>>()
 
@@ -161,6 +162,11 @@ export class RtnRoom {
     })
   }
 
+  setVolume(volume: number): void {
+    this.volume = volume
+    for (const playback of this.playing.values()) playback.setVolume?.(volume)
+  }
+
   private async handlePublished(conn: RtnConnection, userId: string, tracks: RemoteTrack[]) {
     if (this.closed) {
       return
@@ -194,7 +200,9 @@ export class RtnRoom {
       if (!track.id || this.playing.has(track.id)) {
         continue
       }
-      this.playing.set(track.id, track.play())
+      const playback = track.play()
+      playback.setVolume?.(this.volume)
+      this.playing.set(track.id, playback)
       const ids = this.speakerTracks.get(track.userId || userId) ?? new Set<string>()
       ids.add(track.id)
       this.speakerTracks.set(track.userId || userId, ids)

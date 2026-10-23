@@ -30,6 +30,8 @@ export function TalkPanel({
   channelId,
   members,
   subscribe,
+  volumeControl,
+  volume,
   voiceStartRef,
   startUplinkRef,
   stopUplinkRef,
@@ -43,6 +45,8 @@ export function TalkPanel({
   channelId: string
   members: Member[] | undefined
   subscribe: (listener: (event: SignalEvent) => void) => () => void
+  volumeControl: { current: (value: number) => void }
+  volume: number
   voiceStartRef: { current: (signal: AbortSignal) => Promise<void> }
   startUplinkRef: { current: () => void }
   stopUplinkRef: { current: () => Promise<void> }
@@ -199,6 +203,7 @@ export function TalkPanel({
   }
 
   useEffect(() => {
+    volumeControl.current = (value) => { roomRef.current?.setVolume(value) }
     sessionRef.current = session
     channelIDRef.current = channelId
     voiceStartRef.current = async (signal) => {
@@ -278,6 +283,7 @@ export function TalkPanel({
       },
     )
     roomRef.current = room
+    room.setVolume(volume)
     void (async () => {
       try {
         const issued = await fetchRoomToken(session, channelId)
@@ -338,6 +344,8 @@ export function TalkPanel({
       document.removeEventListener('visibilitychange', stopWhenHidden)
     }
   })
+
+  useEffect(() => { roomRef.current?.setVolume(volume) }, [volume])
 
   function press(fromKeyboard = false) {
     if (commanding || viewRef.current !== 'ready' || holdRef.current) {

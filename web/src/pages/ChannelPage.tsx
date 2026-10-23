@@ -33,21 +33,26 @@ import {
   type Me,
   type MeChannel,
   type Session,
+  saveSession,
 } from '../state/session.ts'
 
 export function ChannelPage({
   session,
   onChangeNickname,
+  onNicknameUpdated,
   joinRequest,
   deviceControls,
   onDeviceEvent,
 }: {
   session: Session
   onChangeNickname: () => void
+  onNicknameUpdated: (nickname: string) => void
   joinRequest: JoinLink | null
   deviceControls: { current: (action: DeviceAction) => void }
   onDeviceEvent: (event: DeviceEvent) => void
 }) {
+  const [volume, setVolume] = useState(1)
+  const inviteRef = useRef<HTMLElement>(null)
   const [me, setMe] = useState<Me | null>(null)
   const [identityError, setIdentityError] = useState('')
   const [channel, setChannel] = useState<Channel | null>(null)
@@ -74,6 +79,7 @@ export function ChannelPage({
     talk: 'out',
   })
   const [roomChannelID, setRoomChannelID] = useState('')
+  const volumeControl = useRef<(value: number) => void>(() => {})
   const voiceStartRef = useRef<(signal: AbortSignal) => Promise<void>>(async () => { throw new Error('尚未进入频道') })
   const startUplinkRef = useRef<() => void>(() => {})
   const latestRoom = useRef({ channelID: '', view: 'joining' })
@@ -200,6 +206,22 @@ export function ChannelPage({
         if (!channel || action.channel_id !== channel.channel_id || busy) throw new Error('设备尚未准备好发送')
         finishCommand()
         await voiceStartRef.current(signal)
+      } else if (action.action === 'set_volume') {
+        const value = Number(action.value)
+        if (!action.value || !Number.isFinite(value) || value < 0 || value > 100) throw new Error('音量无效')
+        volumeControl.current(value / 100)
+        setVolume(value / 100)
+      } else if (action.action === 'show_join_qr') {
+        if (!inviteRef.current || action.channel_id !== channel?.channel_id) throw new Error('当前频道二维码未就绪')
+        const qr = inviteRef.current.querySelector('img')
+        if (!qr?.complete || qr.naturalWidth === 0) throw new Error('二维码尚未生成')
+        inviteRef.current.scrollIntoView({ block: 'center' })
+      } else if (action.action === 'set_nickname') {
+        const profile = await fetchMe(session)
+        if (signal.aborted || profile.nickname !== action.value) throw new Error('昵称同步失败')
+        setMe(profile)
+        onNicknameUpdated(profile.nickname)
+        saveSession({ ...session, nickname: profile.nickname })
       } else if (action.action === 'switch_channel') {
         await stopUplinkRef.current()
         if (signal.aborted) throw new Error('动作已取消')
@@ -238,6 +260,7 @@ export function ChannelPage({
           return
         }
         setMe(next)
+        onNicknameUpdated(next.nickname)
         const restored = next.channel
         if (restored) {
           setChannel((current) => current ?? toChannel(restored))
@@ -251,7 +274,7 @@ export function ChannelPage({
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [session, onNicknameUpdated])
 
   useEffect(() => {
     if (openedJoinRef.current || !joinRequest?.ok) {
@@ -462,6 +485,8 @@ export function ChannelPage({
           channelId={channel.channel_id}
           members={roster}
           subscribe={signaling.subscribe}
+          volumeControl={volumeControl}
+          volume={volume}
           voiceStartRef={voiceStartRef}
           startUplinkRef={startUplinkRef}
           stopUplinkRef={stopUplinkRef}
@@ -523,7 +548,7 @@ export function ChannelPage({
         {listError ? <p className="error">{listError}</p> : null}
 
         {channel ? (
-          <section id="join-code">
+          <section id="join-code" ref={inviteRef}>
             <h2>口令与二维码</h2>
             <p className="kicker">口令</p>
             <p className="join-code">{channel.join_code}</p>

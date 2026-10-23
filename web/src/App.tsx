@@ -17,6 +17,7 @@ import {
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession)
+  const [displayNickname, setDisplayNickname] = useState(() => session?.nickname ?? '')
   const [editingNickname, setEditingNickname] = useState(false)
   const [device, dispatchDevice] = useReducer(reduceDevice, initialDeviceSnapshot)
   const controls = useRef<(action: DeviceAction) => void>(() => {})
@@ -27,6 +28,7 @@ export default function App() {
     const next = await createSession(nickname, session)
     saveSession(next)
     setSession(next)
+    setDisplayNickname(next.nickname)
     setEditingNickname(false)
   }
 
@@ -45,7 +47,7 @@ export default function App() {
   const screen = !device.powered ? <p>已关机</p> : device.phase === 'booting' ? <p>启动中…</p> : !session || editingNickname ? (
     <NicknamePage onEnter={enter} joinRequest={joinRequest} />
   ) : (
-    <ChannelPage session={session} onChangeNickname={changeNickname} joinRequest={joinRequest} deviceControls={controls} onDeviceEvent={reportDevice} />
+    <ChannelPage onNicknameUpdated={setDisplayNickname} session={session} onChangeNickname={changeNickname} joinRequest={joinRequest} deviceControls={controls} onDeviceEvent={reportDevice} />
   )
   const onDeviceAction = (action: DeviceAction) => {
     if (action === 'power') {
@@ -56,6 +58,6 @@ export default function App() {
     if (!device.powered || device.phase === 'booting') return
     controls.current(action)
   }
-  const status = `${device.screen} · 小路${session ? ` · ${session.nickname}` : ''}`
+  const status = `${device.screen} · 小路${session ? ` · ${displayNickname}` : ''}`
   return <DeviceShell status={status} phase={device.phase} onAction={onDeviceAction}>{screen}</DeviceShell>
 }

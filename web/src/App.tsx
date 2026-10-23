@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { DeviceShell, type DeviceAction } from './device/DeviceShell.tsx'
 import { ChannelPage } from './pages/ChannelPage.tsx'
 import { NicknamePage } from './pages/NicknamePage.tsx'
 import { getOrCreateDeviceID } from './state/device.ts'
@@ -27,10 +28,16 @@ export default function App() {
     setSession(null)
   }
 
-  if (!session) {
-    return <NicknamePage onEnter={enter} joinRequest={joinRequest} />
-  }
-  return (
+  const screen = !session ? (
+    <NicknamePage onEnter={enter} joinRequest={joinRequest} />
+  ) : (
     <ChannelPage session={session} onChangeNickname={changeNickname} joinRequest={joinRequest} />
   )
+  const onDeviceAction = (action: DeviceAction) => {
+    if (action === 'power') {
+      return
+    }
+    // 3D controls expose semantic actions; the device controller will own execution.
+  }
+  return <DeviceShell status={session ? '在线 · 小路' : '待设置 · 小路'} onAction={onDeviceAction}>{screen}</DeviceShell>
 }

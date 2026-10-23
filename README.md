@@ -1,18 +1,18 @@
 # fleet-ptt
 
-面向司机/车队场景的群语音对讲（Push-to-Talk）。
+面向司机和车队的语音优先群组对讲系统，产品角色名为 **小路**。用户通过自然语音完成建群、入群、切群、开始和结束对讲；浏览器中的 3D 对讲机用于验证未来硬件的操作、状态与音频体验。
 
 ## 文档
 
 - [产品设计方案](docs/product-design.md)
 - [详细技术方案](docs/technical-design.md)
-- [灵矽接入结论](docs/linx-access.md)
+- [灵矽接入方案](docs/linx-access.md)
 
 ## 配置
 
 仓库仅提供 [`.env.example`](.env.example)。本地复制为 `.env` 后填写真实值，勿提交 `.env`。
 
-`LINX_CHAT_TOKEN` 留空时，`POST /api/v1/linx/chat` 会拒绝回调。灵矽侧要配置的地址是 `{PUBLIC_BASE_URL}/api/v1/linx/chat`。这条回调会执行语音建群、入群、切群、开始对讲和列出频道。建群口令逐位返回；口令入群需要再说一次相同口令才进房。
+灵矽回调地址为 `{PUBLIC_BASE_URL}/api/v1/linx/chat`，请求使用 `Authorization: Bearer <LINX_CHAT_TOKEN>`。回调负责将识别后的意图交给小路业务层，业务层执行频道、对讲和设备动作，并返回适合 TTS 的回答。
 
 ## 本地启动
 
@@ -21,16 +21,13 @@ cp .env.example .env
 make up
 ```
 
-`make up`（等同 `make start`）会执行 `docker compose up --build`。浏览器打开 <http://localhost:8080>。另开终端执行 `make health`，应输出 `OK`。停止并移除容器：`make down`。数据目录 `data/` 挂载到容器 `/data`（已 gitignore）。
+`make up` 会执行 `docker compose up --build`，浏览器访问 <http://localhost:8080>。`make health` 检查进程探活，`make down` 停止并移除容器。数据目录 `data/` 挂载到容器 `/data`。
 
-开发时前后端分开跑（各开一个终端，在仓库根目录）：
+开发时可以分别运行：
 
 ```bash
 make server
-```
-
-```bash
 make web
 ```
 
-`make web` 把 `/healthz` 与 `/api` 代理到 `http://127.0.0.1:8080`。`make server` 的静态资源默认从仓库根目录的 `web/dist` 提供，可用 `STATIC_DIR` 覆盖。未设置 `SQLITE_PATH` 时数据库写到 `data/fleet-ptt.db`。签发会话需要 `SESSION_SECRET`：`make up` 从 `.env` 注入；只跑 `make server` 时请先导出该变量。未配置时 `/healthz` 仍返回 `OK`，昵称进入会失败。
+`make web` 将 `/healthz`、`/api` 及 WebSocket 代理到 Go 服务。`make server` 默认从 `web/dist` 托管静态资源，并使用 `data/fleet-ptt.db` 作为本地数据库路径；运行会话功能前需设置 `SESSION_SECRET`。

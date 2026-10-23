@@ -1,406 +1,274 @@
-# fleet-ptt 详细技术方案
+# fleet-ptt 详细技术方案：小路 3D 语音对讲机
 
-本文描述如何实现 [产品设计方案](./product-design.md)：架构、模块、数据、协议、七牛 RTN、灵矽接入与 Docker 部署。产品「做什么」见产品方案；本文只写「怎么做」。
-
----
+本文定义小路智能对讲机的统一实现方案。浏览器中的 3D 对讲机是第一阶段交互载体，后续真实硬件沿用同一套业务语义、设备状态和服务协议。核心操作通过语音完成，只保留电源、指令/结束和 PTT 三个必要控件。
 
 ## 1. 目标与范围
 
-| 项 | 内容 |
+| 项 | 方案 |
 |----|------|
-| 目标 | 交付可演示的 H5 车队对讲：语音指令（灵矽）+ 群对讲（七牛 RTN） |
-| 客户端 | React（Vite）H5 |
-| 服务端 | Go（HTTP API + WebSocket 信令 + 静态资源托管） |
-| 对讲 | 七牛实时音视频云 RTN（[文档](https://doc.qnsdk.com/rtn)） |
-| 指令 | 灵矽第三方业务 Chat SSE（[文档](https://linx.qiniu.com/docs/xrobot/guide/third-app)） |
-| 存储 | SQLite（文件挂载 volume） |
-| 部署 | `make up` 一键启动（内部为 `docker compose up --build`） |
-| 配置 | 仓库仅 `.env.example`；真实配置只在本地 `.env` |
+| 产品角色 | 小路；拟用唤醒词“你好小路” |
+| 客户端 | React + Vite + Three.js 3D 设备原型 |
+| 服务端 | Go HTTP API、WebSocket 设备信令、静态资源托管 |
+| 对讲媒体 | 七牛实时音视频云 RTN，音频为主 |
+| 指令能力 | 灵矽 ASR/TTS + Chat SSE 业务意图 |
+| 存储 | SQLite，保存用户、设备、频道、成员和会话状态 |
+| 部署 | Docker Compose，`make up` 一键启动 |
+| 最终硬件 | 继承按键语义、屏幕状态、业务协议和音频路由 |
 
----
+包含：昵称初始化、语音建群、口令确认入群、语音切群、上一频道、语音开始/结束对讲、PTT 兜底、成员状态、音量调整、口令播报、二维码展示和异常反馈。
+
+不包含：开放域闲聊、地图、IM、支付、组织后台、全程 VOX 自动上麦、制造级 CAD、量产固件和续航结论。
 
 ## 2. 总体架构
 
-指令媒体与对讲媒体分离：灵矽只处理指令链路；对讲上下行只走七牛 RTN。
-
 ```mermaid
 flowchart TB
-  react[React_H5]
-  go[Go_API_WS]
-  linx[LinX]
-  rtn[Qiniu_RTN]
-  db[(SQLite)]
-
-  react -->|"指令音频 WebSocket"| linx
-  linx -->|"Chat_SSE 文本意图"| go
-  go -->|"SSE answer/command"| linx
-  linx -->|"TTS 音频"| react
-  go -->|"WS 信令"| react
-  go -->|"RoomToken"| react
-  react -->|"音视频进房"| rtn
-  go --> db
+  shell[Three.js机身与三个控件] --> control[设备控制层]
+  screen[设备屏幕] --> control
+  control --> state[统一设备状态]
+  state --> shell
+  state --> screen
+  control <--> api[Go业务API与设备信令]
+  control <--> audio[音频控制层]
+  audio <--> rtc[七牛RTN]
+  audio --> wake[本地唤醒检测]
+  audio <--> bridge[指令接入服务]
+  bridge <--> linx[灵矽ASR与TTS]
+  linx --> chat[Chat SSE]
+  chat --> api
+  api --> db[(SQLite)]
 ```
 
-| 组件 | 职责 |
+| 模块 | 职责 |
 |------|------|
-| React H5 | UI、状态机、指令麦、PTT、RTN 订阅/发布、信令客户端 |
-| Go | 用户/频道/成员、口令、RoomToken、灵矽 Chat 回调、向本机推信令 |
-| 灵矽 | ASR、TTS、把用户话转文字调 Go |
-| 七牛 RTN | 房间内音频转发与混音 |
-| SQLite | 持久化用户、频道、成员、device 绑定 |
+| 3D 展示 | GLB 机身、按键命中、按压动画、相机和状态灯 |
+| 设备屏幕 | 当前频道、状态、识别文字、确认、二维码和设备设置 |
+| 设备控制层 | 统一处理语音、按键和屏幕动作，维护状态转换 |
+| 音频控制层 | 唤醒、指令采集、TTS、RTN 收听/发布、音量和资源释放 |
+| Go 业务层 | 用户、设备、频道、成员、口令、权限和动作执行 |
+| 设备信令 | 定向设备动作、执行回执、成员广播和连接状态 |
+| 灵矽接入 | 上游音频、ASR/TTS、意图文本和 Chat SSE |
+| SQLite | 轻量持久化和单实例运行数据 |
 
----
+3D 点击、语音和屏幕兜底都只调用设备控制动作，不直接访问 HTTP 或 SDK。业务层与音频层通过明确的请求、成功、失败和取消结果通信。
 
-## 3. 模块划分
+## 3. 设备形态与 3D 资产
 
-```
-fleet-ptt/
-├── web/                 # React + Vite
-│   ├── src/
-│   │   ├── pages/       # 昵称、对讲主界面
-│   │   ├── state/       # InChannel / CommandListening / Talking
-│   │   ├── rtc/         # 七牛 RTN Web SDK 封装
-│   │   ├── signaling/   # 连接 Go WebSocket
-│   │   └── linx/        # 指令麦 / 与灵矽会话（或嵌入官方入口）
-│   └── ...
-├── server/              # Go module
-│   ├── cmd/server/      # 入口：HTTP + WS + 静态文件
-│   ├── internal/
-│   │   ├── api/         # REST
-│   │   ├── ws/          # 信令
-│   │   ├── channel/     # 频道与口令
-│   │   ├── user/        # 用户与 device 绑定
-│   │   ├── rtn/         # RoomToken 签发
-│   │   ├── linxchat/    # 灵矽 Chat SSE 处理与意图路由
-│   │   └── store/       # SQLite
-│   └── ...
-├── docs/
-├── Dockerfile
-├── docker-compose.yml
-├── Makefile             # 入口：make up / down / health / server / web
-├── .env.example         # 唯一入库的配置样例
-└── .gitignore
-```
+设备采用短天线、竖屏、大侧键的车队对讲机形态，黑灰机身配橙色 PTT。概念尺寸约 125 × 58 × 32 mm，天线约 45 mm；尺寸用于交互比例，最终结构由器件和声学设计决定。
 
----
+| 部件 | 位置与作用 |
+|------|------------|
+| 电源键 | 顶部，长按开关机 |
+| 指令/结束键 | 侧面，唤醒、结束采集、取消或强制停机 |
+| PTT | 侧面握持区，按住讲、松开停 |
+| 屏幕 | 正面，显示业务状态与确认内容 |
+| 状态灯 | 正面顶部，显示收听、指令、发送和异常 |
+| 扬声器 | 正面下部，播放远端语音、TTS 和提示音 |
+| 麦克风 | 正面或顶部，承担唤醒、指令和对讲采集 |
+| 天线/背夹 | 补全设备形态，不增加业务操作 |
 
-## 4. 领域模型与存储
+GLB 节点独立命名为机身、电源键、指令/结束键、PTT、屏幕和状态灯；按键轴心沿按压方向设置。初始目标为 3–5 万三角面、1K 为主的纹理、资源合计尽量不超过 5 MB。默认相机正面偏转约 15°，拖动背景可观察设备；操作按键不会旋转机身。手机端默认固定操作视角。
 
-### 4.1 表结构（SQLite）
+屏幕使用约 240 × 320 的逻辑布局。React/HTML 层与屏幕平面对齐，以保证中文输入、二维码和状态文字清晰；转到背面时隐藏屏幕层，避免穿透。页面外仅提供回正、缩放和观察辅助，不提供业务操作。
 
-**users**
+## 4. 三个控件的行为
 
-| 列 | 类型 | 说明 |
-|----|------|------|
-| id | TEXT PK | 用户 ID |
-| display_name | TEXT | 昵称 |
-| device_id | TEXT UNIQUE | 与灵矽侧设备/会话绑定 |
-| created_at | INTEGER | Unix 秒 |
-
-**channels**
-
-| 列 | 类型 | 说明 |
-|----|------|------|
-| id | TEXT PK | 亦作 RTN roomName |
-| name | TEXT | 展示名（装货、卸货） |
-| join_code | TEXT UNIQUE | 6 位口令 |
-| created_by | TEXT | users.id |
-| created_at | INTEGER | |
-
-**memberships**
-
-| 列 | 类型 | 说明 |
-|----|------|------|
-| user_id | TEXT | |
-| channel_id | TEXT | |
-| role | TEXT | `owner` / `member` |
-| PRIMARY KEY | (user_id, channel_id) | |
-
-**user_session（可选，可内存）**
-
-| 列 | 类型 | 说明 |
-|----|------|------|
-| user_id | TEXT PK | |
-| current_channel_id | TEXT | 当前频道 |
-| talking | INTEGER | 0/1 是否上行 |
-
-### 4.2 口令规则
-
-- 6 位，字符集去掉易混字符（如不用 `0/O`、`1/I`）
-- 创建频道时生成；TTS 逐位播报由灵矽侧播 Go 返回的文案完成
-
----
-
-## 5. 核心时序
-
-### 5.1 进入应用并绑定
-
-```mermaid
-sequenceDiagram
-  participant U as React
-  participant G as Go
-  U->>G: POST /api/v1/session nickname device_id
-  G->>G: upsert user bind device
-  G-->>U: user_id session_token
-  U->>G: WS /api/v1/ws?token=...
-```
-
-### 5.2 语音建群（经灵矽）
-
-```mermaid
-sequenceDiagram
-  participant U as React
-  participant L as LinX
-  participant G as Go
-  U->>L: 指令音频
-  L->>G: Chat SSE text 建一个装货频道
-  G->>G: create_channel
-  G-->>L: answer 口令逐位文案
-  L-->>U: TTS
-  G-->>U: WS channel_created + 切当前频道
-  U->>G: GET RoomToken
-  G-->>U: token
-  U->>U: RTN join 只订阅
-```
-
-### 5.3 开始 / 结束对讲
-
-```mermaid
-sequenceDiagram
-  participant U as React
-  participant L as LinX
-  participant G as Go
-  participant R as RTN
-  U->>L: 开始对讲
-  L->>G: Chat talk_start
-  G-->>U: WS talk_start
-  G-->>L: answer 已开始对讲
-  U->>R: publish 音频
-  Note over U: 结束键或松手 PTT
-  U->>G: WS 或 REST talk_end
-  U->>R: unpublish
-```
-
-PTT：按下 = publish；松开 = unpublish；可与 `talk_start`/`talk_end` 共用同一套 RTN 封装。
-
-### 5.4 语音切群
-
-1. 若 `talking`，先 unpublish + 清 talking  
-2. 更新 `current_channel_id`，离开旧 RTN 房间、加入新房间（只订阅）  
-3. TTS「已切换到 xxx」  
-
----
-
-## 6. API 与协议
-
-鉴权：MVP 用 `session_token`（创建会话时下发），Header `Authorization: Bearer <token>` 或 WS query。
-
-### 6.1 REST
-
-| 方法 | 路径 | 说明 |
+| 控件 | 操作 | 行为 |
 |------|------|------|
-| GET | `/healthz` | 健康检查 |
-| POST | `/api/v1/session` | `{ nickname, device_id }` → user + token |
-| GET | `/api/v1/channels` | 我加入的频道列表 |
-| POST | `/api/v1/channels` | `{ name }` 手动建群 → channel + join_code |
-| POST | `/api/v1/channels/join` | `{ code }` 或 `{ name }` |
-| POST | `/api/v1/channels/current` | `{ channel_id }` 切换当前频道 |
-| GET | `/api/v1/channels/:id/rtn-token` | 签发七牛 RoomToken |
-| POST | `/api/v1/talk/start` | 标记 talking + 广播信令（指令路径也会调内部同一逻辑） |
-| POST | `/api/v1/talk/end` | 结束上行 |
-| POST | `/api/v1/linx/chat` | 灵矽 Chat SSE 回调，Bearer 为 `LINX_CHAT_TOKEN` |
+| 电源键 | 长按约 1.5 秒 | 开机或关机；关机释放唤醒、采集、播放、RTN、WebSocket、重连计时器和摄像头 |
+| 指令/结束键 | 单击 | 唤醒小路；对讲中先停上行再进入指令；采集中结束采集 |
+| 指令/结束键 | 长按 | 取消指令、停止播报并强制结束发送 |
+| PTT | 按下并保持 | 当前频道就绪时请求发布音频；未入频道时播报先加入频道 |
+| PTT | 松开、指针取消或窗口失焦 | 立即解除发送意图并停止发布 |
 
-### 6.2 WebSocket 信令（Go ↔ 本机 React）
+PTT、指令键和语音唤醒共用设备控制层。按键有按压位移、足够命中区、键盘操作和文字提示；短按与长按只触发一次。业务主路径不依赖触屏，屏幕输入和列表选择只作为语音失败时的兜底。
 
-客户端连接：`WS /api/v1/ws`。
+## 5. 语音交互
 
-服务端 → 客户端示例：
+### 5.1 唤醒与连续说法
 
-```json
-{ "type": "talk_start", "channel_id": "...", "user_id": "..." }
-{ "type": "talk_end", "channel_id": "...", "user_id": "..." }
-{ "type": "channel_switched", "channel_id": "...", "name": "装货" }
-{ "type": "channel_created", "channel_id": "...", "name": "...", "join_code": "..." }
-{ "type": "members", "channel_id": "...", "members": [{ "user_id": "", "display_name": "", "talking": false }] }
-{ "type": "error", "message": "未匹配到频道" }
+开机完成授权后，设备在收听频道或未入频道状态本地监听“你好小路”。支持连续说法，例如“你好小路，切到装货”；也支持先唤醒、听到应答后再说内容。补充参数和确认在同一轮上下文内无需重复唤醒。
+
+本地唤醒不向云端持续上传完整待命音频，仅保留连续说法所需的短时内存数据。唤醒、静音、无输入和处理超时由设备控制层统一管理；浏览器后台和锁屏不作为常驻监听承诺。
+
+### 5.2 业务指令
+
+| 用户表达 | 设备行为 |
+|----------|----------|
+| 创建一个装货频道 | 创建并进入，逐位播报口令 |
+| 加入口令三八四二 K 九 | 归一化口令、复述并等待确认 |
+| 确认加入 / 取消 | 执行或清除待确认事项 |
+| 进入装货频道 | 按频道名加入；同名时追问 |
+| 切到卸货 / 切到第二个 | 停止上行并切换频道 |
+| 回到上一个频道 | 返回上一次成功使用的频道 |
+| 我有哪些频道 | 播报序号、名称和当前频道 |
+| 开始对讲 / 继续对讲 | 完成提示音后持续发送 |
+| 结束对讲 | 停止发送并恢复收听 |
+| 音量小一点 / 调到百分之六十 | 调整本设备播放音量 |
+| 谁正在讲话 | 播报当前频道的讲话成员 |
+| 我的口令是什么 | 显示并逐位播报当前频道口令 |
+| 显示邀请二维码 | 在屏幕显示当前频道二维码 |
+| 把昵称改成张师傅 | 复述后确认并更新昵称 |
+
+规则：口令为 6 位，字符集去掉易混字符 `0/O`、`1/I`；中文数字和分隔符归一化后校验。口令入群确认窗口为 2 分钟；无参数追问，同名或歧义澄清，过期或无待办的“确认”不得执行任何动作。昵称修改和口令加入需要确认，其余查询和音量操作不需要确认。
+
+## 6. 音频路由与状态机
+
+### 6.1 音频路由
+
+- 收听状态：RTN 只订阅远端，本地唤醒可以运行。
+- 指令状态：先阻断 RTN 上行，再采集指令并发送到灵矽；指令期间降低或暂停远端播放。
+- 对讲状态：RTN 发布本地音频；普通对讲音频不送灵矽。
+- TTS 状态：暂停唤醒触发和指令上传，避免自唤醒。
+- 关机状态：销毁所有采集、播放、房间、信令和重连资源。
+
+同一设备的指令上行和 RTN 上行互斥。需验证七牛 Web SDK 是否支持共享采集轨或外部音轨；不能假定两个 SDK 同时打开麦克风稳定。检测到唤醒词后先阻断 RTN 上行，再采集指令。首版接受检测完成前的唤醒词片段可能传给频道；检测后不得继续把指令音频送入频道。
+
+### 6.2 状态机
+
+```mermaid
+stateDiagram-v2
+  [*] --> Off
+  Off --> Booting: 电源长按
+  Booting --> Standby: 初始化完成
+  Standby --> Listening: 进入频道
+  Standby --> CommandListening: 唤醒或指令键
+  Listening --> CommandListening: 唤醒或指令键
+  Listening --> Talking: PTT或开始对讲
+  Talking --> CommandListening: 唤醒后先停上行
+  Talking --> Listening: 松开PTT或结束
+  CommandListening --> Processing: 采集结束
+  Processing --> Confirming: 需要确认
+  Confirming --> CommandListening: 确认或取消
+  Processing --> Listening: 完成且已入频道
+  Processing --> Standby: 完成且未入频道
+  Processing --> Talking: 开始或继续对讲
 ```
 
-客户端 → 服务端：
+实际发送必须以本地媒体发布成功为准；服务端动作许可、TTS 完成、媒体发布和成员状态广播分别产生结果。未入房、识别失败、网络断开、关机或取消时不得自动恢复发送。
+
+### 6.3 对讲时序
+
+```mermaid
+sequenceDiagram
+  participant D as 设备控制层
+  participant G as Go业务层
+  participant A as 音频控制层
+  participant R as 七牛RTN
+  D->>G: 请求开始对讲
+  G-->>D: 动作许可
+  D->>A: 播放完成提示音
+  D->>A: 检查未取消且房间就绪
+  A->>R: publish
+  R-->>A: 发布结果
+  A-->>D: 实际发送成功或失败
+  D->>G: 发送执行回执
+  G-->>D: 同步成员讲话状态
+```
+
+停止顺序为：解除本地发送意图 → 阻断本地上行 → 同步业务状态。HTTP 请求不能阻塞本地停止。切群顺序为停止发送、提交频道切换、离开旧房间、进入新房间，目标媒体就绪后才播报“已切换”。
+
+## 7. 身份、设备与数据
+
+用户、应用设备和灵矽设备是三个独立概念。服务端保存经过授权的设备映射；设备 ID 用于定位，不作为凭证。
+
+| 数据 | 作用 |
+|------|------|
+| users | 用户 ID、昵称、创建时间 |
+| devices | 应用设备 ID、灵矽设备 ID、绑定状态、最后连接时间 |
+| channels | 频道 ID、名称、口令、创建者、创建时间 |
+| memberships | 用户、频道、角色 |
+| device_session | 当前频道、发送状态、上一频道、活动动作 |
+| command_context | 设备级待确认动作、参数、过期时间、动作 ID |
+
+同一设备只允许一个当前频道和一个上行状态；成员事件广播给频道成员，设备动作定向到目标设备。绑定流程先验证设备归属，再建立用户会话。首次语音设置只允许初始化昵称和绑定，不开放未鉴权的通用音频代理。所有动作使用唯一动作 ID，处理重复回调、取消和迟到结果。
+
+## 8. 服务接口
+
+### 8.1 业务 HTTP
+
+| 方法 | 路径 | 作用 |
+|------|------|------|
+| GET | `/healthz` | 进程探活 |
+| POST | `/api/v1/device/session` | 创建或恢复设备会话 |
+| POST | `/api/v1/device/bind` | 授权设备与用户绑定 |
+| GET | `/api/v1/me` | 返回用户与当前频道 |
+| GET/POST | `/api/v1/channels` | 查询或创建频道 |
+| POST | `/api/v1/channels/join` | 按口令或名称入群 |
+| POST | `/api/v1/channels/current` | 切换当前频道 |
+| GET | `/api/v1/channels/{id}/rtn-token` | 为成员签发 RoomToken |
+| POST | `/api/v1/actions/{id}/result` | 上报设备动作结果 |
+| POST | `/api/v1/talk/start` | 请求开始上行 |
+| POST | `/api/v1/talk/end` | 请求结束上行 |
+| POST | `/api/v1/linx/chat` | 接收灵矽 Chat SSE 意图 |
+
+### 8.2 设备 WebSocket
+
+设备连接：`/api/v1/device/ws`。连接使用设备会话凭证，动作包含 `action_id` 和目标设备 ID。
+
+服务端向设备发送：
 
 ```json
-{ "type": "talk_end" }
+{ "type": "action", "action_id": "...", "action": "talk_start" }
+{ "type": "action", "action_id": "...", "action": "talk_end" }
+{ "type": "action", "action_id": "...", "action": "switch_channel", "channel_id": "..." }
+{ "type": "channel_state", "channel_id": "...", "name": "装货" }
+{ "type": "members", "channel_id": "...", "members": [] }
+{ "type": "error", "action_id": "...", "message": "..." }
+```
+
+设备向服务端发送：
+
+```json
+{ "type": "action_result", "action_id": "...", "status": "success", "details": {} }
+{ "type": "action_result", "action_id": "...", "status": "failed", "message": "..." }
+{ "type": "talk_end", "action_id": "..." }
 { "type": "ping" }
 ```
 
-`talk_start` 经灵矽到达 Go 后，必须 **WS 推到该 device 对应连接**，React 才能 publish；不能只依赖灵矽 TTS。
+成员讲话状态只广播给同频道成员；设备动作只发送给目标设备。服务端不以 SSE 写入成功代替设备动作成功。
 
-### 6.3 灵矽 Chat SSE（灵矽 → Go）
+### 8.3 灵矽 Chat SSE
 
-Go 暴露灵矽可访问的公网或内网回调，例如：
+灵矽向 `/api/v1/linx/chat` 发送 `auth.device_id`、`details.msg` 和 `details.session_id`，请求头为 `Authorization: Bearer <LINX_CHAT_TOKEN>`。服务端验证设备映射、解析意图、检查权限并执行动作，返回一条 `message` 和一条 `message_end`；`details.answer` 用于 TTS，`details.intent` 表示动作类型，`session_id` 原样回传。
 
-`POST /api/v1/linx/chat`（`Accept: text/event-stream`）
+意图包括 `create_channel`、`join_channel`、`confirm_join`、`cancel_join`、`switch_channel`、`previous_channel`、`talk_start`、`talk_end`、`list_my_channels`、`list_speakers`、`show_join_code`、`show_join_qr`、`set_volume` 和 `set_nickname`。业务失败也返回可播报的 `answer`，设备动作以 WebSocket 回执确认。
 
-请求体按[第三方应用接入](https://linx.qiniu.com/docs/xrobot/guide/third-app)约定解析 `auth.device_id`、`details.msg`、`details.session_id`。
+### 8.4 灵矽音频接入
 
-意图路由（规则 + 可选轻量 LLM，MVP 可用关键词 / 正则）：
+优先使用官方 Web 接入；若设备协议需要浏览器无法设置的握手头，则由服务端建立受鉴权的音频桥接。桥接负责设备注册、握手、音频编码、ASR/TTS 音频转发、会话释放和断线处理；灵矽凭证只存服务端。必须实测上行格式、采样率、帧长、TTS 格式、播放完成信号和并发限制，不能假设浏览器 `MediaRecorder` 输出可直接使用。
 
-| 用户话术模式 | 内部能力 |
-|--------------|----------|
-| 建…频道/群 | `create_channel` |
-| 加入口令 / 进… | `join_channel` |
-| 切换到 / 切到 | `switch_channel` |
-| 开始对讲 | `talk_start` |
-| 结束对讲 | `talk_end`（若仍走指令） |
-| 我有哪些频道 | `list_my_channels` |
+## 9. 安全、部署与运行约束
 
-SSE 响应：`event: message` + `type: chat` 的 `answer` 文案供 TTS；需要时附带业务结果。`session_id` 原样回传。
+- `SESSION_SECRET`、七牛 AK/SK、RTN AppID、`LINX_CHAT_TOKEN` 和桥接凭证只放本地 `.env` 或部署环境。
+- RoomToken 由 Go 短时签发，浏览器不接触七牛 SecretKey。
+- 灵矽回调校验 Bearer token、设备映射、请求类型、会话 ID 和动作权限。
+- WebSocket 仅接受有效设备会话，动作按设备定向；频道成员事件按成员关系发送。
+- SQLite 使用单实例 volume，数据需要备份；多实例部署需另行提供共享存储和连接协调。
+- 公网使用 HTTPS，反向代理支持 WebSocket 升级和 SSE 不缓冲；`localhost` 可用于浏览器麦克风开发。
+- 关机、取消、失焦和断线均释放本地资源；恢复连接后重新同步频道，不自动恢复讲话。
 
-口令相关 `answer` 须适合逐位朗读（如「口令是 3、8、4、2、9、1」）。
+## 10. 实施与验收
 
-实现约定见 [灵矽接入结论](./linx-access.md)：`Authorization` 必须等于 `LINX_CHAT_TOKEN`；`device_id` 必须已绑定用户；成功时先返回 `answer`，再返回 `message_end`。关键词路由会执行建群、入群、切群、开始或结束对讲，以及列出频道。口令按逐位文案返回；口令入群先复述确认一次。成功或失败都会推到该用户的 WebSocket，失败的 `answer` 不能为空。
+1. 设备控制层、三按键灰模、屏幕状态和资源生命周期。
+2. 频道、成员、RTN 收听与 PTT 对讲闭环。
+3. 灵矽音频桥接、Chat 意图、动作 ID、回执、确认与取消。
+4. “你好小路”本地唤醒、连续说法、对讲中打断和回声处理。
+5. 正式模型、材质、灯光、二维码和移动端体验。
+6. 目标硬件平台的 RTN、灵矽、唤醒、声学、弱网和续航评估。
 
----
+验收要求：首次授权后，用户只通过小路语音完成昵称设置、建群、确认入群、切群/回切、开始/结束对讲、音量和邀请查询；三个按键随时可以中止或兜底。验证覆盖无效口令、确认过期、歧义追问、识别失败、媒体失败、快速松开、迟到回调、重复动作、设备断线、关机释放和真实双端音频。
 
-## 7. 七牛 RTN 接入
+## 11. 配置与开发命令
 
-参考：[接入流程](https://doc.qnsdk.com/rtn/docs/rtn_startup)、[Web SDK](https://doc.qnsdk.com/rtn/web)。
-
-| 项 | 约定 |
-|----|------|
-| AppID | 来自七牛 RTN 控制台，仅写入本地 `.env` |
-| roomName | 使用 `channel.id` |
-| userId | 使用 `users.id` |
-| RoomToken | **仅 Go 服务端**用 AccessKey/SecretKey 签发，短时有效 |
-| 媒体 | MVP 仅音频 |
-| InChannel | `join` 后只订阅远端，不 publish |
-| Talking / PTT 按下 | publish 本地音频轨 |
-| 结束 / 松手 | unpublish |
-| 切群 | leave 旧房间 → 用新 token join |
-
-前端使用官方 Web SDK（如 `qnweb-rtc` / 文档当前包名以官网为准），封装：
-
-- `joinChannel(token, roomName, userId)`
-- `startPublish()` / `stopPublish()`
-- `leaveChannel()`
-- 远端 track 订阅与「正在说」UI 钩子
-
----
-
-## 8. 灵矽接入
-
-| 项 | 约定 |
-|----|------|
-| 主路径 | 第三方业务 Chat SSE → Go |
-| ASR/TTS | 灵矽完成 |
-| device_id | 与 `users.device_id` 一致，指令才能路由到对的 WS 连接 |
-| MCP | 与 Chat 同构后挂，不阻塞 MVP |
-
-**H5 作为灵矽设备：** 已按公开协议核对，结论是双页。浏览器 `WebSocket` 不能携带握手必需的 `Authorization`、`Device-Id`、`Client-Id`、`Protocol-Version`，公开文档也没有 H5 设备 SDK。指令页留在灵矽，对讲页与信令留在本仓库 React + Go，靠同一个 `device_id` 对齐。详见 [灵矽接入结论](./linx-access.md)。
-
-指令音流与 RTN 上行默认不同时占用同一采集策略：进入 `CommandListening` 时若正在 Talking，先 `stopPublish`。
-
----
-
-## 9. 前端状态机
-
-| 状态 | RTN | 指令麦 | UI |
-|------|-----|--------|-----|
-| NoChannel | 未进房 | 可开 | 引导建群/入群 |
-| InChannel | 已 join，未 publish | 可开 | 可听；显示结束/PTT/指令麦 |
-| CommandListening | 保持订阅；必要时已停 publish | 采集送灵矽 | 「指令中」 |
-| Talking | publish 中 | 默认不开指令 | 「正在讲」；结束键/松手 |
-
-事件：`SESSION_OK`、`JOINED_CHANNEL`、`CMD_START`、`CMD_END`、`TALK_START`、`TALK_END`、`SWITCH_CHANNEL`、`ERROR`。
-
----
-
-## 10. 配置管理
-
-### 10.1 原则
-
-- **仓库只提交配置样例**（`.env.example`）  
-- **真实配置只在本地**（复制为 `.env` 后填写），不进入 Git  
-- `docker-compose.yml`、文档、CI、代码中不得出现真实密钥  
-
-### 10.2 样例变量（名称以 `.env.example` 为准）
-
-| 变量 | 用途 |
+| 配置 | 用途 |
 |------|------|
-| `HTTP_ADDR` | 监听地址，如 `:8080` |
-| `SQLITE_PATH` | 如 `/data/fleet-ptt.db` |
-| `SESSION_SECRET` | 签发 session 用 |
-| `QINIU_ACCESS_KEY` | 七牛 AK |
-| `QINIU_SECRET_KEY` | 七牛 SK |
-| `QINIU_RTN_APP_ID` | RTN AppID |
-| `LINX_CHAT_TOKEN` | 校验灵矽回调（若平台有约定） |
-| `PUBLIC_BASE_URL` | 灵矽可访问的 Chat 回调基址 |
+| `HTTP_ADDR` | Go 监听地址，默认 `:8080` |
+| `STATIC_DIR` | 静态目录，默认 `web/dist` |
+| `SQLITE_PATH` | SQLite 文件路径 |
+| `SESSION_SECRET` | 设备/用户会话签名 |
+| `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_RTN_APP_ID` | 七牛 RTN 凭证 |
+| `LINX_CHAT_TOKEN` | 灵矽 Chat 回调校验 |
+| `PUBLIC_BASE_URL` | 灵矽访问本服务的公网基址 |
 
-本地：`cp .env.example .env` 后填写。Compose：`env_file: .env`。
-
----
-
-## 11. Docker 部署
-
-### 11.1 目标
-
-本地备好 `.env` 后，用 Make 启动。Make 是入口，实际执行 `docker compose up --build`：
-
-```bash
-make up
-```
-
-浏览器访问映射端口（如 `http://localhost:8080`）。`make health` 请求 `GET /healthz`；`make down` 停止并移除容器。
-
-### 11.2 镜像
-
-多阶段构建：
-
-1. **web-build**：Node 构建 React → `dist/`  
-2. **go-build**：编译 `server`，`embed` 或复制 `dist` 到镜像  
-3. **runtime**：精简基础镜像，只跑二进制；数据目录 `/data`
-
-### 11.3 Compose 契约
-
-- 服务名：`app`  
-- `env_file: .env`（文件不存在则启动失败，避免空配置误跑）  
-- ports：`8080:8080`  
-- volumes：`./data:/data`（gitignore）  
-- healthcheck：`GET /healthz`  
-- **可选 profile `tls`**：旁路 Caddy，证书目录仅本地挂载、不入库；公网演示麦克风需要 HTTPS 时启用  
-
-`localhost` 下可用 HTTP 测麦克风；公网必须 HTTPS。
-
----
-
-## 12. 安全与运维注意
-
-| 点 | 做法 |
-|----|------|
-| 密钥 | 仅 `.env`；定期轮换；泄露即作废 |
-| RoomToken | 短 TTL；按 user+room 签发 |
-| 灵矽回调 | 校验 token / 来源；按 device_id 鉴权用户 |
-| CORS | 仅必要来源；同域由 Go 托管静态则可收紧 |
-| SQLite | volume 备份；单实例写入 |
-
----
-
-## 13. 风险与对策
-
-| 风险 | 对策 |
-|------|------|
-| H5 难当灵矽设备 | 已核对：MVP 用双页，见 [linx-access.md](./linx-access.md) |
-| 口令 ASR 听错 | 逐位播报 + 入群确认 |
-| 指令与对讲抢麦 | 状态机互斥；开指令先停 publish |
-| 误提交密钥 | `.gitignore`；只用 `.env.example`；Code Review 检查 |
-| RoomToken / 时钟 | 容器 NTP；TTL 留余量 |
-
----
-
-## 14. 实现顺序建议
-
-1. Go：session、频道、SQLite、healthz、静态占位页  
-2. RoomToken + React RTN 进房订阅 / PTT publish  
-3. WebSocket 信令与 talk_start/end  
-4. 灵矽 Chat 回调与意图路由  
-5. 指令麦联调与切群  
-6. Dockerfile / Compose / Makefile 与 `.env.example` 打通一键启动  
+`make up` 构建并启动 Docker Compose；`make server` 启动 Go；`make web` 启动 Vite；`make health` 请求 `/healthz`；`make down` 停止服务。真实配置不入 Git。

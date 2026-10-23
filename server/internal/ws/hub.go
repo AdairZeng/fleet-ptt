@@ -26,8 +26,10 @@ type Hub struct {
 	users    *user.Service
 	channels *channel.Service
 
-	mu    sync.Mutex
-	conns map[string]map[*client]struct{}
+	mu      sync.Mutex
+	conns   map[string]map[*client]struct{}
+	devices map[string]*client
+	actions map[string]pendingAction
 }
 
 // NewHub 用同一套用户与频道服务处理信令。
@@ -36,13 +38,16 @@ func NewHub(users *user.Service, channels *channel.Service) *Hub {
 		users:    users,
 		channels: channels,
 		conns:    map[string]map[*client]struct{}{},
+		devices:  map[string]*client{},
+		actions:  map[string]pendingAction{},
 	}
 }
 
 type client struct {
-	userID string
-	conn   *websocket.Conn
-	send   chan []byte
+	userID   string
+	deviceID string
+	conn     *websocket.Conn
+	send     chan []byte
 
 	mu     sync.Mutex
 	closed bool
@@ -108,9 +113,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(1 << 16)
 	c := &client{
-		userID: u.ID,
-		conn:   conn,
-		send:   make(chan []byte, sendBuffer),
+		userID:   u.ID,
+		deviceID: u.DeviceID,
+		conn:     conn,
+		send:     make(chan []byte, sendBuffer),
 	}
 	h.add(c)
 	defer func() {
@@ -296,6 +302,8 @@ func (h *Hub) dispatch(c *client, data []byte) {
 		return
 	}
 	switch msg.Type {
+	case "action_result":
+		h.actionResult(c, data)
 	case "ping":
 		h.reply(c, pongWire{Type: "pong"})
 	case "talk_end":
@@ -331,7 +339,21 @@ func (h *Hub) add(c *client) {
 		set = map[*client]struct{}{}
 		h.conns[c.userID] = set
 	}
+	if previous := h.devices[c.deviceID]; previous != nil && previous != c {
+		delete(set, previous)
+		previous.closeSend()
+		go previous.conn.Close(websocket.StatusCode(4001), "设备已在另一页面连接")
+		for id, action := range h.actions {
+			if action.client == previous {
+				select {
+				case action.result <- actionResult{ID: id, Message: "设备连接已替换"}:
+				default:
+				}
+			}
+		}
+	}
 	set[c] = struct{}{}
+	h.devices[c.deviceID] = c
 }
 
 func (h *Hub) detach(c *client) {
@@ -347,6 +369,17 @@ func (h *Hub) detach(c *client) {
 }
 
 func (h *Hub) remove(c *client) bool {
+	if h.devices[c.deviceID] == c {
+		delete(h.devices, c.deviceID)
+	}
+	for id, action := range h.actions {
+		if action.client == c {
+			select {
+			case action.result <- actionResult{ID: id, Message: "设备已断线"}:
+			default:
+			}
+		}
+	}
 	set := h.conns[c.userID]
 	if _, ok := set[c]; !ok {
 		return false
@@ -367,6 +400,7 @@ func (h *Hub) greet(ctx context.Context, c *client) {
 		}
 		return
 	}
+	c.sendMsg(encode(channelSwitchedWire{Type: "channel_state", ChannelID: view.Channel.ID, Name: view.Channel.Name}))
 	members, err := h.channels.Members(ctx, view.Channel.ID)
 	if err != nil {
 		log.Printf("ws: greet members: %v", err)

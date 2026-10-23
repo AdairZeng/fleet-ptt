@@ -6,7 +6,13 @@ export type Member = {
   talking: boolean
 }
 
+export type DeviceCommand = { type: 'action'; action_id: string; action: string; channel_id?: string; value?: string }
+export type ActionExecutor = (action: DeviceCommand, signal: AbortSignal) => Promise<void>
+
 export type SignalEvent =
+  | DeviceCommand
+  | { type: 'action_cancel'; action_id: string }
+  | { type: 'channel_state'; channel_id: string; name: string }
   | { type: 'talk_start'; channel_id: string; user_id: string }
   | { type: 'talk_end'; channel_id: string; user_id: string }
   | { type: 'members'; channel_id: string; members: Member[] }
@@ -35,6 +41,13 @@ export function parseSignal(raw: string): SignalEvent | null {
   }
   const rec = value as Record<string, unknown>
   switch (rec.type) {
+    case 'action':
+      if (typeof rec.action_id !== 'string' || !rec.action_id || typeof rec.action !== 'string') return null
+      if (rec.channel_id !== undefined && typeof rec.channel_id !== 'string') return null
+      if (rec.value !== undefined && typeof rec.value !== 'string') return null
+      return { type: 'action', action_id: rec.action_id, action: rec.action, channel_id: rec.channel_id as string | undefined, value: rec.value as string | undefined }
+    case 'action_cancel':
+      return typeof rec.action_id === 'string' && rec.action_id ? { type: 'action_cancel', action_id: rec.action_id } : null
     case 'pong':
       return { type: 'pong' }
     case 'error':
@@ -62,11 +75,12 @@ export function parseSignal(raw: string): SignalEvent | null {
         name: rec.name,
         join_code: rec.join_code,
       }
+    case 'channel_state':
     case 'channel_switched':
       if (typeof rec.channel_id !== 'string' || typeof rec.name !== 'string') {
         return null
       }
-      return { type: 'channel_switched', channel_id: rec.channel_id, name: rec.name }
+      return { type: rec.type, channel_id: rec.channel_id, name: rec.name }
     default:
       return null
   }
@@ -151,11 +165,13 @@ export async function endTalk(session: Session): Promise<void> {
   await postTalk(session, '/api/v1/talk/end')
 }
 
-export function openSignaling(session: Session, onEvent: (event: SignalEvent) => void): () => void {
+export function openSignaling(session: Session, onEvent: (event: SignalEvent) => void, execute?: ActionExecutor): () => void {
   let closed = false
   let socket: WebSocket | null = null
   let timer = 0
   let delay = 1000
+  const actions = new Map<string, { controller: AbortController; reply?: string }>()
+  const cancelActions = () => { for (const action of actions.values()) action.controller.abort(); actions.clear() }
 
   const connect = () => {
     if (closed) {
@@ -170,15 +186,51 @@ export function openSignaling(session: Session, onEvent: (event: SignalEvent) =>
     }
     ws.onmessage = (message) => {
       const event = parseSignal(String(message.data))
-      if (event) {
-        onEvent(event)
+      if (event?.type === 'action_cancel') {
+        actions.get(event.action_id)?.controller.abort()
+        return
       }
+      if (event?.type === 'action') {
+        const existing = actions.get(event.action_id)
+        if (existing) {
+          if (existing.reply && ws.readyState === WebSocket.OPEN) ws.send(existing.reply)
+          return
+        }
+        if (actions.size >= 256) {
+          const completed = [...actions.entries()].find(([, item]) => item.reply)
+          if (completed) actions.delete(completed[0])
+          else { ws.close(); return }
+        }
+        const entry: { controller: AbortController; reply?: string } = { controller: new AbortController() }
+        actions.set(event.action_id, entry)
+        void (async () => {
+          let success = false
+          let message = ''
+          try {
+            if (!execute) throw new Error('设备动作尚未就绪')
+            await execute(event, entry.controller.signal)
+            if (entry.controller.signal.aborted) throw new Error('动作已取消')
+            success = true
+          } catch (error) { message = error instanceof Error ? error.message : '动作失败' }
+          entry.reply = JSON.stringify({ type: 'action_result', action_id: event.action_id, success, message: message.slice(0, 256) })
+          if (ws.readyState === WebSocket.OPEN) ws.send(entry.reply)
+        })()
+        return
+      }
+      if (event) onEvent(event)
     }
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (closed) {
         return
       }
+      cancelActions()
       onEvent({ type: 'disconnected' })
+      if (event.code === 4001) {
+        closed = true
+        window.clearInterval(ping)
+        onEvent({ type: 'error', message: '设备已在另一页面连接，请关闭重复页面' })
+        return
+      }
       timer = window.setTimeout(connect, delay)
       delay = Math.min(delay * 2, 10000)
     }
@@ -193,6 +245,7 @@ export function openSignaling(session: Session, onEvent: (event: SignalEvent) =>
 
   return () => {
     closed = true
+    cancelActions()
     window.clearInterval(ping)
     window.clearTimeout(timer)
     socket?.close()

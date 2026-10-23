@@ -7,7 +7,6 @@ import {
 import { createQiniuRoom, type RtnRoom } from '../rtc/index.ts'
 import {
   endTalk,
-  observeSelfTalk,
   selfTalkAction,
   speakingText,
   startTalk,
@@ -31,11 +30,11 @@ export function TalkPanel({
   channelId,
   members,
   subscribe,
+  voiceStartRef,
   startUplinkRef,
   stopUplinkRef,
   leaveRoomRef,
   commanding,
-  onVoiceUplink,
   onRoomChange,
   onCommand,
   commandDisabled,
@@ -44,6 +43,7 @@ export function TalkPanel({
   channelId: string
   members: Member[] | undefined
   subscribe: (listener: (event: SignalEvent) => void) => () => void
+  voiceStartRef: { current: (signal: AbortSignal) => Promise<void> }
   startUplinkRef: { current: () => void }
   stopUplinkRef: { current: () => Promise<void> }
   leaveRoomRef: { current: () => Promise<void> }
@@ -187,25 +187,6 @@ export function TalkPanel({
     return stopPublish
   }
 
-  function beginFromSignal() {
-    const observed = observeSelfTalk(suppressRef.current, 'start')
-    suppressRef.current = observed.suppress
-    if (!observed.follow) {
-      return
-    }
-    onVoiceUplink()
-    const gen = ++generation.current
-    wantRef.current = true
-    setError('')
-    setPublishing(true)
-    enqueue(async () => {
-      if (generation.current !== gen || !wantRef.current) {
-        return
-      }
-      await publishHeld(gen)
-    })
-  }
-
   function finishFromSignal() {
     holdRef.current = false
     keyboardHoldRef.current = false
@@ -220,6 +201,20 @@ export function TalkPanel({
   useEffect(() => {
     sessionRef.current = session
     channelIDRef.current = channelId
+    voiceStartRef.current = async (signal) => {
+      if (signal.aborted || viewRef.current !== 'ready' || wantRef.current) throw new Error('设备尚未准备好发送')
+      const gen = ++generation.current
+      wantRef.current = true
+      const cancel = () => { void stopLocal().catch(() => {}) }
+      signal.addEventListener('abort', cancel, { once: true })
+      try {
+        await publishHeld(gen)
+        if (!wantRef.current || generation.current !== gen || signal.aborted) throw new Error('发送失败或已取消')
+      } catch (error) {
+        signal.removeEventListener('abort', cancel)
+        throw error
+      }
+    }
     startUplinkRef.current = () => press()
     stopUplinkRef.current = () => {
       holdRef.current = false
@@ -246,7 +241,7 @@ export function TalkPanel({
         sessionRef.current.user_id,
       )
       if (action === 'start') {
-        beginFromSignal()
+        suppressRef.current = Math.max(0, suppressRef.current - 1)
       } else if (action === 'end') {
         finishFromSignal()
       }

@@ -366,6 +366,10 @@ type wsBox struct {
 }
 
 func collectWS(t *testing.T, conn *websocket.Conn) *wsBox {
+	return collectDeviceWS(t, conn, false)
+}
+
+func collectDeviceWS(t *testing.T, conn *websocket.Conn, acknowledge bool) *wsBox {
 	t.Helper()
 	box := &wsBox{}
 	box.cond = sync.NewCond(&box.mu)
@@ -377,6 +381,21 @@ func collectWS(t *testing.T, conn *websocket.Conn) *wsBox {
 			}
 			var ev wsEvent
 			if err := json.Unmarshal(data, &ev); err != nil {
+				continue
+			}
+			if acknowledge && ev.Type == "action" {
+				var action struct {
+					ID string `json:"action_id"`
+				}
+				if json.Unmarshal(data, &action) == nil {
+					raw, _ := json.Marshal(map[string]any{"type": "action_result", "action_id": action.ID, "success": true})
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					_ = conn.Write(ctx, websocket.MessageText, raw)
+					cancel()
+				}
+				continue
+			}
+			if ev.Type == "channel_state" {
 				continue
 			}
 			ev.raw = string(data)

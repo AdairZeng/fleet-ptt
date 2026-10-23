@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '../state/session.ts'
-import { openSignaling, reduceRosters, type Rosters, type SignalEvent } from './index.ts'
+import { openSignaling, reduceRosters, type Rosters, type SignalEvent, type ActionExecutor } from './index.ts'
 
 type SignalHandlers = {
+  executeAction: ActionExecutor
   onChannelCreated: (event: Extract<SignalEvent, { type: 'channel_created' }>) => void
   onChannelSwitched: (event: Extract<SignalEvent, { type: 'channel_switched' }>) => void
   onError: (message: string) => void
@@ -23,8 +24,8 @@ export function useChannelSignaling(session: Session, handlers: SignalHandlers) 
       setRosters((current) => reduceRosters(current, event))
       if (event.type === 'channel_created') {
         handlersRef.current.onChannelCreated(event)
-      } else if (event.type === 'channel_switched') {
-        handlersRef.current.onChannelSwitched(event)
+      } else if (event.type === 'channel_switched' || event.type === 'channel_state') {
+        handlersRef.current.onChannelSwitched({ ...event, type: 'channel_switched' })
       } else if (event.type === 'error') {
         handlersRef.current.onError(event.message)
       } else if (event.type === 'notice') {
@@ -33,7 +34,7 @@ export function useChannelSignaling(session: Session, handlers: SignalHandlers) 
       for (const listener of listeners.current) {
         listener(event)
       }
-    })
+    }, (action, signal) => handlersRef.current.executeAction(action, signal))
   }, [session])
 
   const subscribe = useCallback((listener: (event: SignalEvent) => void) => {

@@ -25,16 +25,11 @@ body {
 .device-stage {
   width: min(100%, 46rem);
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: minmax(14rem, 19rem) minmax(12rem, 18rem);
-  align-items: center;
-  justify-content: center;
-  gap: clamp(1rem, 4vw, 2.5rem);
 }
 
 .device-canvas-wrap {
   position: relative;
-  min-height: 32rem;
+  min-height: 48rem;
   border-radius: 2rem;
   background: linear-gradient(145deg, #dbeafe, #eef2ff 46%, #cbd5e1);
   box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08), 0 1rem 3rem rgba(15, 23, 42, 0.16);
@@ -44,7 +39,8 @@ body {
 .device-canvas-wrap canvas {
   display: block;
   width: 100%;
-  height: 32rem;
+  height: 48rem;
+  touch-action: none;
 }
 
 .device-model-note {
@@ -83,19 +79,25 @@ body {
   outline-offset: 2px;
 }
 
-.device-power-hotspot { top: 13%; right: 8%; }
-.device-command-hotspot { top: 48%; right: 5%; }
-.device-ptt-hotspot { top: 42%; left: 4%; }
+.device-hotspot { transform: translate(-50%, -50%); }
+.device-hotspot.held { box-shadow: inset 0 2px 6px #000; }
+.device-screen-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.device-reset { display: block; margin: 1rem auto; }
 
 .device-screen {
-  min-height: 20rem;
-  padding: 0.8rem;
+  width: 240px;
+  height: 320px;
+  padding: 8px;
   box-sizing: border-box;
-  border: 0.8rem solid #111827;
-  border-radius: 1.7rem;
-  background: #e5e7eb;
-  box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.18);
+  border: 2px solid #111827;
+  border-radius: 8px;
+  background: var(--card);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .device-screen-status {
@@ -151,22 +153,10 @@ body {
 }
 
 @media (max-width: 44rem) {
-  .device-stage {
-    grid-template-columns: 1fr;
-    max-width: 30rem;
-  }
-
-  .device-canvas-wrap {
-    min-height: 24rem;
-  }
-
-  .device-canvas-wrap canvas {
-    height: 24rem;
-  }
-
-  .device-screen {
-    min-height: 16rem;
-  }
+  .device-page { padding: 0.5rem; }
+  .device-canvas-wrap { min-height: 42rem; }
+  .device-canvas-wrap canvas { height: 42rem; }
+  .device-hotspot { min-width: 2.75rem; padding: 0.35rem; }
 }
 
 main {

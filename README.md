@@ -30,4 +30,4 @@ make server
 make web
 ```
 
-`make web` 把 `/healthz` 与 `/api` 代理到 `http://127.0.0.1:8080`。`make server` 的静态资源默认从仓库根目录的 `web/dist` 提供，可用 `STATIC_DIR` 覆盖。
+`make web` 把 `/healthz` 与 `/api` 代理到 `http://127.0.0.1:8080`。`make server` 的静态资源默认从仓库根目录的 `web/dist` 提供，可用 `STATIC_DIR` 覆盖。未设置 `SQLITE_PATH` 时数据库写到 `data/fleet-ptt.db`。签发会话需要 `SESSION_SECRET`：`make up` 从 `.env` 注入；只跑 `make server` 时请先导出该变量。未配置时 `/healthz` 仍返回 `OK`，昵称进入会失败。

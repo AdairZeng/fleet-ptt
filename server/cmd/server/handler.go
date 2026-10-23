@@ -8,11 +8,13 @@ import (
 	"strings"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/api"
+	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
 
-func newHandler(staticDir string) http.Handler {
+func newHandler(staticDir string, svc *user.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.Healthz)
+	api.Register(mux, svc)
 	if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
 		mux.Handle("/", staticSite(staticDir))
 	}

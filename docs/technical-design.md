@@ -14,7 +14,7 @@
 | 对讲 | 七牛实时音视频云 RTN（[文档](https://doc.qnsdk.com/rtn)） |
 | 指令 | 灵矽第三方业务 Chat SSE（[文档](https://linx.qiniu.com/docs/xrobot/guide/third-app)） |
 | 存储 | SQLite（文件挂载 volume） |
-| 部署 | `docker compose up --build` 一键启动 |
+| 部署 | `make up` 一键启动（内部为 `docker compose up --build`） |
 | 配置 | 仓库仅 `.env.example`；真实配置只在本地 `.env` |
 
 ---
@@ -77,6 +77,7 @@ fleet-ptt/
 ├── docs/
 ├── Dockerfile
 ├── docker-compose.yml
+├── Makefile             # 入口：make up / down / health / server / web
 ├── .env.example         # 唯一入库的配置样例
 └── .gitignore
 ```
@@ -339,13 +340,13 @@ SSE 响应：`event: message` + `type: chat` 的 `answer` 文案供 TTS；需要
 
 ### 11.1 目标
 
-本地备好 `.env` 后：
+本地备好 `.env` 后，用 Make 启动。Make 是入口，实际执行 `docker compose up --build`：
 
 ```bash
-docker compose up --build
+make up
 ```
 
-浏览器访问映射端口（如 `http://localhost:8080`）。
+浏览器访问映射端口（如 `http://localhost:8080`）。`make health` 请求 `GET /healthz`；`make down` 停止并移除容器。
 
 ### 11.2 镜像
 
@@ -399,4 +400,4 @@ docker compose up --build
 3. WebSocket 信令与 talk_start/end  
 4. 灵矽 Chat 回调与意图路由  
 5. 指令麦联调与切群  
-6. Dockerfile / Compose 与 `.env.example` 打通一键启动  
+6. Dockerfile / Compose / Makefile 与 `.env.example` 打通一键启动  

@@ -7,20 +7,24 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test test/talk.test.ts test/room.test.ts test/signaling.test.ts test/channel.test.ts",
+    "test": "node --test test/talk.test.ts test/room.test.ts test/signaling.test.ts test/channel.test.ts test/joinLink.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
     "qnweb-rtc": "^4.3.2",
+    "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "jsqr": "^1.4.0",
     "oxlint": "^1.88.0",
+    "pngjs": "^7.0.0",
     "typescript": "~6.0.3",
     "vite": "^8.3.4"
   }

@@ -66,6 +66,12 @@ func TestStaticSite(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/join/3842K9", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "home" {
+		t.Fatalf("join link status %d body %q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Body.String() != "OK\n" {
 		t.Fatalf("healthz shadowed by static: %q", rec.Body.String())

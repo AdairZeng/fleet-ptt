@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { JoinQR } from './JoinQR.tsx'
+import { ScanJoin } from './ScanJoin.tsx'
 import { TalkPanel } from './TalkPanel.tsx'
 import { useChannelSignaling } from '../signaling/useChannelSignaling.ts'
 import {
@@ -9,14 +11,23 @@ import {
   switchListeningChannel,
   type Channel,
 } from '../state/channel.ts'
+import {
+  clearJoinLocation,
+  invalidJoinQRMessage,
+  isJoinCode,
+  normalizeJoinCode,
+  type JoinLink,
+} from '../state/joinLink.ts'
 import { fetchMe, type Me, type MeChannel, type Session } from '../state/session.ts'
 
 export function ChannelPage({
   session,
   onChangeNickname,
+  joinRequest,
 }: {
   session: Session
   onChangeNickname: () => void
+  joinRequest: JoinLink | null
 }) {
   const [me, setMe] = useState<Me | null>(null)
   const [identityError, setIdentityError] = useState('')
@@ -25,6 +36,10 @@ export function ChannelPage({
   const [code, setCode] = useState('')
   const [createError, setCreateError] = useState('')
   const [joinError, setJoinError] = useState('')
+  const [linkError, setLinkError] = useState(() =>
+    joinRequest && !joinRequest.ok ? joinRequest.message : '',
+  )
+  const [linkNotice, setLinkNotice] = useState('')
   const [pending, setPending] = useState<'create' | 'join' | 'switch' | ''>('')
   const [signalError, setSignalError] = useState('')
   const [channels, setChannels] = useState<Channel[] | null>(null)
@@ -35,9 +50,65 @@ export function ChannelPage({
   const stopUplinkRef = useRef<() => Promise<void>>(async () => {})
   const leaveRoomRef = useRef<() => Promise<void>>(async () => {})
   const switchingRef = useRef(false)
+  const joiningRef = useRef(false)
+  const openedJoinRef = useRef(false)
   const refreshChannels = useCallback(() => {
     setListRevision((n) => n + 1)
   }, [])
+  const enterByCode = useCallback(
+    async (rawCode: string, source: 'code' | 'qr') => {
+      const normalized = normalizeJoinCode(rawCode)
+      if (source === 'qr' && !isJoinCode(normalized)) {
+        setLinkError(invalidJoinQRMessage)
+        setLinkNotice('')
+        return
+      }
+      if (isJoinCode(normalized) && channel?.join_code === normalized) {
+        setJoinError('')
+        setLinkError('')
+        setLinkNotice('已在这个频道')
+        clearJoinLocation()
+        return
+      }
+      if (joiningRef.current) {
+        return
+      }
+      joiningRef.current = true
+      setPending('join')
+      setJoinError('')
+      setLinkError('')
+      setLinkNotice('')
+      switchingRef.current = true
+      const previousID = channel?.channel_id ?? ''
+      try {
+        if (previousID) {
+          await stopUplinkRef.current()
+        }
+        const joined = await joinChannelByCode(session, source === 'qr' ? normalized : rawCode)
+        if (previousID && previousID !== joined.channel_id) {
+          await leaveRoomRef.current()
+        }
+        setChannel(joined)
+        setCode('')
+        setLinkNotice(source === 'qr' ? `已加入${joined.name}` : '')
+        setSwitchNotice('')
+        refreshChannels()
+        clearJoinLocation()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '加入失败'
+        if (source === 'qr') {
+          setLinkError(message)
+        } else {
+          setJoinError(message)
+        }
+      } finally {
+        joiningRef.current = false
+        switchingRef.current = false
+        setPending('')
+      }
+    },
+    [channel, refreshChannels, session],
+  )
   const onChannelCreated = useCallback(
     (event: { channel_id: string; name: string; join_code: string }) => {
       setChannel({
@@ -95,6 +166,14 @@ export function ChannelPage({
   }, [session])
 
   useEffect(() => {
+    if (openedJoinRef.current || !joinRequest?.ok) {
+      return
+    }
+    openedJoinRef.current = true
+    void enterByCode(joinRequest.code, 'qr')
+  }, [enterByCode, joinRequest])
+
+  useEffect(() => {
     let cancelled = false
     listChannels(session)
       .then((next) => {
@@ -143,19 +222,7 @@ export function ChannelPage({
       setJoinError('请输入口令')
       return
     }
-    setPending('join')
-    setJoinError('')
-    try {
-      const joined = await joinChannelByCode(session, nextCode)
-      setChannel(joined)
-      setCode('')
-      setSwitchNotice('')
-      refreshChannels()
-    } catch (err) {
-      setJoinError(err instanceof Error ? err.message : '加入失败')
-    } finally {
-      setPending('')
-    }
+    await enterByCode(nextCode, 'code')
   }
 
   async function onSwitch(target: Channel) {
@@ -199,6 +266,16 @@ export function ChannelPage({
         <p>正在确认身份…</p>
       )}
       {signalError ? <p className="error">{signalError}</p> : null}
+      {linkError ? (
+        <p className="error" role="alert">
+          {linkError}
+        </p>
+      ) : null}
+      {linkNotice ? (
+        <p className="hint" role="status">
+          {linkNotice}
+        </p>
+      ) : null}
 
       {channel ? (
         <section>
@@ -208,9 +285,10 @@ export function ChannelPage({
           <p className="join-code">{channel.join_code}</p>
           <p className="hint">
             {channel.role === 'owner'
-              ? '把口令告诉其他司机，他们输入后即可加入。'
-              : '你已用口令加入这个频道。'}
+              ? '把口令或二维码给其他司机，他们即可加入。'
+              : '你已加入这个频道，也可以把二维码给其他司机。'}
           </p>
+          <JoinQR origin={window.location.origin} code={channel.join_code} name={channel.name} />
         </section>
       ) : (
         <p className="hint">还没有当前频道。创建一个频道，或输入队长给你的 6 位口令。</p>
@@ -312,6 +390,7 @@ export function ChannelPage({
             {pending === 'join' ? '加入中…' : '加入'}
           </button>
         </form>
+        <ScanJoin disabled={busy} onCode={(nextCode) => void enterByCode(nextCode, 'qr')} />
       </section>
 
       <button type="button" className="secondary" onClick={onChangeNickname}>

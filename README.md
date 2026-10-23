@@ -6,10 +6,13 @@
 
 - [产品设计方案](docs/product-design.md)
 - [详细技术方案](docs/technical-design.md)
+- [灵矽接入结论](docs/linx-access.md)
 
 ## 配置
 
 仓库仅提供 [`.env.example`](.env.example)。本地复制为 `.env` 后填写真实值，勿提交 `.env`。
+
+`LINX_CHAT_TOKEN` 留空时，`POST /api/v1/linx/chat` 会拒绝回调。灵矽侧要配置的地址是 `{PUBLIC_BASE_URL}/api/v1/linx/chat`。
 
 ## 本地启动
 

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,10 +42,17 @@ func main() {
 	if !tokens.Configured() {
 		log.Print("QINIU_ACCESS_KEY, QINIU_SECRET_KEY, or QINIU_RTN_APP_ID is empty; GET /api/v1/channels/{id}/rtn-token will fail until they are set")
 	}
+	linxToken := os.Getenv("LINX_CHAT_TOKEN")
+	if linxToken == "" {
+		log.Print("LINX_CHAT_TOKEN is empty; POST /api/v1/linx/chat will reject callbacks until it is set")
+	}
+	if base := publicBaseURL(os.Getenv("PUBLIC_BASE_URL")); base != "" {
+		log.Printf("linx chat callback: %s/api/v1/linx/chat", base)
+	}
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(staticDir, svc, channels, tokens),
+		Handler:           newHandler(staticDir, svc, channels, tokens, linxToken),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -78,4 +87,16 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// publicBaseURL 返回可写进日志的公网基址。空值、非 http(s)、以及用户信息都不会被打印。
+func publicBaseURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+		return ""
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return strings.TrimRight(u.String(), "/")
 }

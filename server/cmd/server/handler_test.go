@@ -17,7 +17,7 @@ import (
 
 func TestHealthz(t *testing.T) {
 	users, channels := testDeps(t)
-	h := newHandler(filepath.Join(t.TempDir(), "missing"), users, channels, rtn.Signer{})
+	h := newHandler(filepath.Join(t.TempDir(), "missing"), users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -51,7 +51,7 @@ func TestStaticSite(t *testing.T) {
 	}
 
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{})
+	h := newHandler(dir, users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
@@ -84,7 +84,7 @@ func TestSessionNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{})
+	h := newHandler(dir, users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"老王","device_id":"device-1"}`))
@@ -103,7 +103,7 @@ func TestChannelNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{})
+	h := newHandler(dir, users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"队长","device_id":"device-1"}`))
@@ -140,7 +140,7 @@ func TestRoomTokenNotShadowedByStatic(t *testing.T) {
 		AccessKey: "test-ak",
 		SecretKey: "test-sk-should-not-leak",
 		AppID:     "test-app",
-	})
+	}, "")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"队长","device_id":"device-1"}`))
@@ -188,7 +188,7 @@ func TestSignalingNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{})
+	h := newHandler(dir, users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil))
@@ -200,6 +200,47 @@ func TestSignalingNotShadowedByStatic(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/talk/start", nil))
 	if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "home") {
 		t.Fatalf("talk status %d body %s", rec.Code, rec.Body)
+	}
+}
+
+func TestLinxChatNotShadowedByStatic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	users, channels := testDeps(t)
+	h := newHandler(dir, users, channels, rtn.Signer{}, "linx-test-token")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"nickname":"老王","device_id":"device-linx"}`))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/linx/chat", strings.NewReader(`{"auth":{"device_id":"device-linx"},"type":"chat","details":{"msg":"你好","session_id":"s-1"}}`))
+	req.Header.Set("Authorization", "Bearer linx-test-token")
+	req.Header.Set("Accept", "text/event-stream")
+	h.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || strings.Contains(body, "home") || !strings.Contains(body, `"answer"`) || !strings.Contains(body, `"session_id":"s-1"`) {
+		t.Fatalf("linx status %d body %s", rec.Code, body)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream; charset=utf-8" {
+		t.Fatalf("content-type %q", ct)
+	}
+}
+
+func TestPublicBaseURL(t *testing.T) {
+	if got := publicBaseURL(" https://fleet.example/ "); got != "https://fleet.example" {
+		t.Fatalf("base %q", got)
+	}
+	if got := publicBaseURL("https://user:secret@fleet.example"); got != "" {
+		t.Fatalf("userinfo %q", got)
+	}
+	if got := publicBaseURL("not a url"); got != "" {
+		t.Fatalf("invalid %q", got)
 	}
 }
 

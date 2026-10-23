@@ -1,12 +1,16 @@
 # fleet-ptt
 
-面向司机/车队场景的群语音对讲（Push-to-Talk）MVP。
+面向司机/车队场景的群语音对讲（Push-to-Talk）。
 
-## 本期目标
+## 文档
 
-- 手机/平板端：灵活建群、进房对讲、语音切群
-- 架构预留：同一房间协议可接入嵌入式车载端
+- [产品设计方案](docs/product-design.md)
+- [详细技术方案](docs/technical-design.md)
+
+## 配置
+
+仓库仅提供 [`.env.example`](.env.example)。本地复制为 `.env` 后填写真实值，勿提交 `.env`。
 
 ## 状态
 
-Hackathon 脚手架，开发中。
+设计阶段；实现按技术方案推进。Docker Compose 一键启动见技术方案部署章节。

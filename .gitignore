@@ -147,3 +147,17 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Local secrets and runtime data (keep only *.example in git)
+.env
+.env.*
+!.env.example
+data/
+*.pem
+*.key
+certs/
+*.db
+
+# Go
+server/bin/
+*.exe

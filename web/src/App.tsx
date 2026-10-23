@@ -59,5 +59,5 @@ export default function App() {
     controls.current(action)
   }
   const status = `${device.screen} · 小路${session ? ` · ${displayNickname}` : ''}`
-  return <DeviceShell status={status} phase={device.phase} onAction={onDeviceAction}>{screen}</DeviceShell>
+  return <DeviceShell status={status} phase={device.phase} indicator={device.indicator} onAction={onDeviceAction}>{screen}</DeviceShell>
 }

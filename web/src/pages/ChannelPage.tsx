@@ -372,8 +372,8 @@ export function ChannelPage({
     try {
       await stopUplinkRef.current()
       if (commandGeneration.current !== generation) return
-      setCommanding(true)
-      setVoiceNotice('')
+      setCommanding(false)
+      setVoiceNotice('语音暂未就绪，请使用屏幕操作。')
       setSignalError('')
     } catch (err) {
       setSignalError(err instanceof Error ? err.message : '停止发送失败')
@@ -400,7 +400,12 @@ export function ChannelPage({
 
   useEffect(() => {
     deviceControls.current = (action) => {
-      if (action === 'ptt-end') {
+      if (action === 'command-cancel') {
+        commandGeneration.current += 1
+        setCommanding(false)
+        setArming(false)
+        void stopUplinkRef.current().catch(() => {})
+      } else if (action === 'ptt-end') {
         void stopUplinkRef.current().catch(() => {})
       } else if (action === 'ptt-start' && !inCommand && !busy) {
         startUplinkRef.current()
@@ -459,7 +464,7 @@ export function ChannelPage({
         {copy.detail ? <p className="talk-detail">{copy.detail}</p> : null}
       </section>
       {inCommand && presence !== 'commanding' ? (
-        <p className="hint">上行已关闭，请在灵矽设备上说指令。</p>
+        <p className="hint">发送已停止。语音暂未就绪，请使用屏幕操作。</p>
       ) : null}
       {signalError ? <p className="error">{signalError}</p> : null}
       {voiceNotice ? (

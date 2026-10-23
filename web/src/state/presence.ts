@@ -19,7 +19,7 @@ export type PresenceCopy = {
 const copy: Record<Presence, PresenceCopy> = {
   idle: {
     label: '未进频道',
-    detail: '创建一个频道，输入口令，或点指令麦后在灵矽设备上说。',
+    detail: '可以创建频道，输入口令或扫码加入。',
   },
   joining: {
     label: '进房中',
@@ -35,7 +35,7 @@ const copy: Record<Presence, PresenceCopy> = {
   },
   commanding: {
     label: '指令中',
-    detail: '上行已关闭，请在灵矽设备上说指令。',
+    detail: '发送已停止。语音暂未就绪，请使用屏幕操作。',
   },
   talking: {
     label: '正在讲',

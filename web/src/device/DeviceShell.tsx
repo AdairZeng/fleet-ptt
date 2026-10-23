@@ -2,15 +2,16 @@ import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from '
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import type { DevicePhase } from './controller.ts'
+import type { DevicePhase, DeviceSnapshot } from './controller.ts'
 
-export type DeviceAction = 'power' | 'command' | 'ptt-start' | 'ptt-end'
+export type DeviceAction = 'power' | 'command' | 'command-cancel' | 'ptt-start' | 'ptt-end'
 
 type DeviceShellProps = {
   children: ReactNode
   status: string
   onAction?: (action: DeviceAction) => void
   phase?: DevicePhase
+  indicator: DeviceSnapshot['indicator']
 }
 
 type DeviceScene = {
@@ -24,10 +25,13 @@ type DeviceScene = {
 
 const modelURL = '/models/xiaolu.glb'
 
-export function DeviceShell({ children, status, onAction = () => {}, phase = 'standby' }: DeviceShellProps) {
+export function DeviceShell({ children, status, onAction = () => {}, phase = 'standby', indicator }: DeviceShellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [modelState, setModelState] = useState<'loading' | 'model' | 'gray'>('loading')
   const [pttHeld, setPttHeld] = useState(false)
+  const pressTimer = useRef<number | null>(null)
+  const pressKind = useRef<'power' | 'command' | null>(null)
+  const longPressTriggered = useRef(false)
   const heldRef = useRef(false)
   const actionRef = useRef(onAction)
   const sceneRef = useRef<DeviceScene | null>(null)
@@ -63,6 +67,53 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
     actionRef.current(action)
   }
 
+  function cancelPress() {
+    if (pressTimer.current !== null) window.clearTimeout(pressTimer.current)
+    pressTimer.current = null
+    pressKind.current = null
+  }
+
+  function beginPress(kind: 'power' | 'command') {
+    if (pressKind.current !== null) return
+    pressKind.current = kind
+    longPressTriggered.current = false
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null
+      longPressTriggered.current = true
+      trigger(kind === 'power' ? 'power' : 'command-cancel')
+    }, 1500)
+  }
+
+  function endPress(kind: 'power' | 'command') {
+    if (pressKind.current !== kind) return
+    const long = longPressTriggered.current
+    cancelPress()
+    if (kind === 'command' && !long) trigger('command')
+  }
+
+  function pressHandlers(kind: 'power' | 'command') {
+    return {
+      onPointerDown: (event: PointerEvent<HTMLButtonElement>) => {
+        event.currentTarget.setPointerCapture(event.pointerId)
+        beginPress(kind)
+      },
+      onPointerUp: () => endPress(kind),
+      onPointerCancel: cancelPress,
+      onLostPointerCapture: cancelPress,
+      onBlur: cancelPress,
+      onKeyDown: (event: import('react').KeyboardEvent<HTMLButtonElement>) => {
+        if (event.key !== ' ' && event.key !== 'Enter') return
+        event.preventDefault()
+        if (!event.repeat) beginPress(kind)
+      },
+      onKeyUp: (event: import('react').KeyboardEvent<HTMLButtonElement>) => {
+        if (event.key !== ' ' && event.key !== 'Enter') return
+        event.preventDefault()
+        endPress(kind)
+      },
+    }
+  }
+
   function onPTTDown(event: PointerEvent<HTMLButtonElement>) {
     if (heldRef.current) return
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -80,6 +131,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
 
   useEffect(() => {
     const release = () => {
+      cancelPress()
       if (!heldRef.current) return
       heldRef.current = false
       setPttHeld(false)
@@ -89,6 +141,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
     window.addEventListener('blur', release)
     document.addEventListener('visibilitychange', visibility)
     return () => {
+      cancelPress()
       window.removeEventListener('blur', release)
       document.removeEventListener('visibilitychange', visibility)
     }
@@ -113,17 +166,17 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
           <button
             type="button"
             className="device-hotspot device-power-hotspot"
-            aria-label="电源键"
-            onClick={() => trigger('power')}
+            aria-label="长按1.5秒开关机"
+            {...pressHandlers('power')}
           >
-            电源
+            长按电源
           </button>
           <button
             type="button"
             className="device-hotspot device-command-hotspot"
-            aria-label="指令和结束键"
-            disabled={phase === 'off' || phase === 'booting' || phase === 'processing'}
-            onClick={() => trigger('command')}
+            aria-label="指令和结束键，长按取消"
+            disabled={phase === 'off' || phase === 'booting'}
+            {...pressHandlers('command')}
           >
             指令
           </button>
@@ -156,7 +209,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
           </button>
         </div>
         <div className="device-screen" aria-label="小路设备屏幕">
-          <div className="device-screen-status">{status}</div>
+          <div className="device-screen-status" role="status"><span className={`device-indicator indicator-${indicator}`} aria-hidden="true" />{status}</div>
           {children}
         </div>
       </section>

@@ -63,6 +63,18 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 		e.gate.Offer(u.DeviceID, "nickname:"+parsed.Name, now)
 		out = voiceResult{Intent: parsed.Intent, Answer: "以后叫你" + parsed.Name + "，请说确认或取消"}
 	case linxchat.IntentSetVolume:
+		if parsed.Name == "+10" || parsed.Name == "-10" {
+			if err := e.hub.Execute(ctx, u.DeviceID, "set_volume", "", parsed.Name); err != nil {
+				out = fail(parsed.Intent, err.Error())
+				break
+			}
+			answer := "音量已调高"
+			if parsed.Name == "-10" {
+				answer = "音量已调低"
+			}
+			out = voiceResult{Intent: parsed.Intent, Answer: answer}
+			break
+		}
 		volume, ok := linxchat.ParseVolume(parsed.Name)
 		if !ok {
 			out = fail(parsed.Intent, "请说音量调到 0 到 100 的数字")
@@ -92,7 +104,7 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	case linxchat.IntentListChannels:
 		out = e.list(ctx, u.ID)
 	default:
-		out = voiceResult{Intent: linxchat.IntentEcho, Answer: "收到：" + parsed.Text}
+		out = fail(linxchat.IntentEcho, "没有识别到操作。可以说创建装货频道、加入口令、切到装货、开始对讲或结束对讲")
 	}
 	e.hub.PushText(u.ID, voiceKind(out.Failed), out.Answer)
 	return linxchat.Result{Intent: out.Intent, Answer: out.Answer}

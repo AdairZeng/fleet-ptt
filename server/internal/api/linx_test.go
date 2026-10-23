@@ -54,7 +54,7 @@ func TestLinxChatSSE(t *testing.T) {
 	echo := postLinx(t, h, token, linxBody(device, "你好车队", "sid/keep"))
 	echoEvents := parseSSE(t, echo.Body.String())
 	echoDetails, _ := echoEvents[0]["details"].(map[string]any)
-	if echo.Code != http.StatusOK || echoDetails["answer"] != "收到：你好车队" || echoEvents[0]["session_id"] != "sid/keep" {
+	if echo.Code != http.StatusOK || echoDetails["answer"] != "没有识别到操作。可以说创建装货频道、加入口令、切到装货、开始对讲或结束对讲" || echoEvents[0]["session_id"] != "sid/keep" {
 		t.Fatalf("echo status %d body %s", echo.Code, echo.Body)
 	}
 

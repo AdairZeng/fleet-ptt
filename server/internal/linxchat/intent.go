@@ -54,26 +54,30 @@ type Result struct {
 
 // Parse 按关键词归类，并抽出频道名、口令或序号。更具体的话术优先。
 func Parse(msg string) Utterance {
-	msg = strings.TrimSpace(msg)
+	msg = strings.TrimRight(strings.TrimSpace(msg), "。！？!?，, ")
 	msg = strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(msg, "你好小路"), "，,。 "))
 	switch {
 	case exact(msg, "上一频道", "上一个频道", "切回上一频道", "回到上一个频道"):
 		return Utterance{Intent: IntentPreviousChannel, Text: msg}
-	case strings.Contains(msg, "谁在说话"), strings.Contains(msg, "谁在讲话"):
+	case strings.Contains(msg, "谁在说话"), strings.Contains(msg, "谁在讲话"), strings.Contains(msg, "谁正在讲话"):
 		return Utterance{Intent: IntentListSpeakers, Text: msg}
 	case strings.Contains(msg, "二维码"):
 		return Utterance{Intent: IntentShowJoinQR, Text: msg}
-	case exact(msg, "频道口令", "当前口令", "口令是多少", "查看口令"):
+	case exact(msg, "频道口令", "当前口令", "口令是多少", "查看口令", "我的口令是什么"):
 		return Utterance{Intent: IntentShowJoinCode, Text: msg}
-	case strings.HasPrefix(msg, "叫我"), strings.HasPrefix(msg, "昵称改成"), strings.HasPrefix(msg, "修改昵称"):
-		return Utterance{Intent: IntentSetNickname, Name: cutAfter(msg, []string{"叫我", "昵称改成", "修改昵称"}), Text: msg}
+	case strings.HasPrefix(msg, "叫我"), strings.HasPrefix(msg, "我叫"), strings.HasPrefix(msg, "把昵称改成"), strings.HasPrefix(msg, "昵称改成"), strings.HasPrefix(msg, "修改昵称"):
+		return Utterance{Intent: IntentSetNickname, Name: cutAfter(msg, []string{"叫我", "我叫", "把昵称改成", "昵称改成", "修改昵称"}), Text: msg}
+	case exact(msg, "音量小一点", "音量调小一点", "音量调低一点"):
+		return Utterance{Intent: IntentSetVolume, Name: "-10", Text: msg}
+	case exact(msg, "音量大一点", "音量调大一点", "音量调高一点"):
+		return Utterance{Intent: IntentSetVolume, Name: "+10", Text: msg}
 	case strings.HasPrefix(msg, "音量"):
 		value := strings.TrimSpace(strings.TrimSuffix(cutAfter(msg, []string{"音量调到", "音量设为", "音量"}), "%"))
 		value = strings.TrimPrefix(value, "百分之")
 		return Utterance{Intent: IntentSetVolume, Name: value, Text: msg}
 	case strings.Contains(msg, "结束对讲"):
 		return Utterance{Intent: IntentTalkEnd, Text: msg}
-	case strings.Contains(msg, "开始对讲"):
+	case strings.Contains(msg, "开始对讲"), strings.Contains(msg, "继续对讲"):
 		return Utterance{Intent: IntentTalkStart, Text: msg}
 	case exact(msg, "确认加入", "确认", "是的", "没错"):
 		return Utterance{Intent: IntentConfirmJoin, Text: msg}
@@ -234,6 +238,13 @@ func utteranceCode(s string) (string, bool) {
 		}
 		if unicode.IsSpace(r) {
 			continue
+		}
+		if digit, ok := cnDigit[r]; ok {
+			r = rune('0' + digit)
+		} else if r == '零' || r == '〇' {
+			r = '0'
+		} else if r == '两' {
+			r = '2'
 		}
 		b.WriteRune(unicode.ToUpper(r))
 	}

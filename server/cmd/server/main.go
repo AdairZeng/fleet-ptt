@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
@@ -29,10 +30,11 @@ func main() {
 	if svc.Secret == "" {
 		log.Print("SESSION_SECRET is empty; POST /api/v1/session will fail until it is set")
 	}
+	channels := &channel.Service{Store: st}
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(staticDir, svc),
+		Handler:           newHandler(staticDir, svc, channels),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

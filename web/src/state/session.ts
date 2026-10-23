@@ -6,10 +6,18 @@ export type Session = {
   nickname: string
 }
 
+export type MeChannel = {
+  channel_id: string
+  name: string
+  join_code: string
+  role: string
+}
+
 export type Me = {
   user_id: string
   nickname: string
   device_id: string
+  channel: MeChannel | null
 }
 
 type ErrorBody = {
@@ -72,7 +80,12 @@ export async function createSession(nickname: string, deviceID: string): Promise
 
 export async function fetchMe(session: Session): Promise<Me> {
   const res = await fetch('/api/v1/me', { headers: authHeaders(session) })
-  const body = (await readBody(res)) as ErrorBody & Partial<Me>
+  const body = (await readBody(res)) as ErrorBody & {
+    user_id?: string
+    nickname?: string
+    device_id?: string
+    channel?: unknown
+  }
   if (!res.ok || !body.user_id || !body.nickname || !body.device_id) {
     throw new Error(body.error || '身份无效')
   }
@@ -80,6 +93,23 @@ export async function fetchMe(session: Session): Promise<Me> {
     user_id: body.user_id,
     nickname: body.nickname,
     device_id: body.device_id,
+    channel: readChannel(body.channel),
+  }
+}
+
+function readChannel(value: unknown): MeChannel | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  const channel = value as Partial<MeChannel>
+  if (!channel.channel_id || !channel.name || !channel.join_code || !channel.role) {
+    return null
+  }
+  return {
+    channel_id: channel.channel_id,
+    name: channel.name,
+    join_code: channel.join_code,
+    role: channel.role,
   }
 }
 

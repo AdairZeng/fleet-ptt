@@ -18,6 +18,16 @@ func UserFromRequest(svc *user.Service, r *http.Request) (store.User, error) {
 	return svc.Authenticate(r.Context(), token)
 }
 
+// requireUser 把未登录写成 401。调用方在 ok 为 false 时直接返回。
+func requireUser(svc *user.Service, w http.ResponseWriter, r *http.Request) (store.User, bool) {
+	u, err := UserFromRequest(svc, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, errorBody(user.ErrUnauthorized.Error()))
+		return store.User{}, false
+	}
+	return u, true
+}
+
 func bearerToken(header string) (string, bool) {
 	scheme, token, ok := strings.Cut(header, " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") {

@@ -99,7 +99,6 @@ export function useDeviceChannel({
   const stopUplinkRef = useRef<() => Promise<void>>(async () => {})
   const leaveRoomRef = useRef<() => Promise<void>>(async () => {})
   const switchingRef = useRef(false)
-  const joiningRef = useRef(false)
   const openedJoinRef = useRef(false)
   const refreshChannels = useCallback(() => {
     setListRevision((n) => n + 1)
@@ -119,10 +118,9 @@ export function useDeviceChannel({
         clearJoinLocation()
         return
       }
-      if (joiningRef.current) {
+      if (switchingRef.current) {
         return
       }
-      joiningRef.current = true
       setPending('join')
       setJoinError('')
       setLinkError('')
@@ -157,7 +155,6 @@ export function useDeviceChannel({
           setJoinError(message)
         }
       } finally {
-        joiningRef.current = false
         switchingRef.current = false
         setPending('')
       }
@@ -169,6 +166,7 @@ export function useDeviceChannel({
   }, [])
   const onChannelCreated = useCallback(
     (event: { channel_id: string; name: string; join_code: string }) => {
+      if (switchingRef.current) return
       setChannel({
         channel_id: event.channel_id,
         name: event.name,
@@ -215,6 +213,7 @@ export function useDeviceChannel({
   const signaling = useChannelSignaling(session, {
     executeAction: async (action: DeviceCommand, signal: AbortSignal) => {
       requireActive()
+      if (switchingRef.current && action.action !== 'talk_end') throw new Error('正在切换频道')
       if (signal.aborted) throw new Error('动作已取消')
       if (action.action === 'talk_end') {
         await stopUplinkRef.current()
@@ -324,11 +323,13 @@ export function useDeviceChannel({
 
   async function onCreate(event: FormEvent) {
     event.preventDefault()
+    if (switchingRef.current) return
     const nextName = name.trim()
     if (!nextName) {
       setCreateError('请输入频道名')
       return
     }
+    switchingRef.current = true
     setPending('create')
     setCreateError('')
     try {
@@ -345,6 +346,7 @@ export function useDeviceChannel({
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : '创建频道失败')
     } finally {
+      switchingRef.current = false
       setPending('')
     }
   }
@@ -360,7 +362,7 @@ export function useDeviceChannel({
   }
 
   async function onSwitch(target: Channel) {
-    if (pending !== '' || target.channel_id === channel?.channel_id) {
+    if (switchingRef.current || target.channel_id === channel?.channel_id) {
       return
     }
     setPending('switch')

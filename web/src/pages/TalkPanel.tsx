@@ -4,7 +4,7 @@ import { memberIsLive } from '../state/presence.ts'
 import { useDeviceTalk, type DeviceTalkProps } from '../device/useDeviceTalk.ts'
 
 export function TalkPanel(props: DeviceTalkProps) {
-  const { session, members, commanding, onCommand, commandDisabled } = props
+  const { session, members, commanding, sendingDisabled, onCommand, commandDisabled } = props
   const {
     view,
     error,
@@ -87,7 +87,7 @@ export function TalkPanel(props: DeviceTalkProps) {
           <button
             type="button"
             className={talking ? 'ptt talking' : 'ptt'}
-            disabled={!joined || commanding}
+            disabled={!joined || commanding || sendingDisabled}
             aria-pressed={talking}
             onPointerDown={onPointerDown}
             onPointerUp={release}

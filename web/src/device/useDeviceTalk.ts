@@ -36,6 +36,7 @@ export type DeviceTalkProps = {
   stopUplinkRef: { current: () => Promise<void> }
   leaveRoomRef: { current: () => Promise<void> }
   commanding: boolean
+  sendingDisabled: boolean
   onVoiceUplink: () => void
   onRoomChange: (room: RoomSnapshot) => void
   onCommand: () => void
@@ -54,6 +55,7 @@ export function useDeviceTalk({
   stopUplinkRef,
   leaveRoomRef,
   commanding,
+  sendingDisabled,
   onRoomChange,
 }: DeviceTalkProps) {
   const [view, setView] = useState<View>('joining')
@@ -238,7 +240,13 @@ export function useDeviceTalk({
       }
       return stopLocal()
     }
-    leaveRoomRef.current = () => roomRef.current?.leave() ?? Promise.resolve()
+    leaveRoomRef.current = () => {
+      const room = roomRef.current
+      void stopLocal().catch(() => {})
+      setViewNow('joining')
+      setTalk('out')
+      return room?.leave() ?? Promise.resolve()
+    }
     onSignalRef.current = (event) => {
       if (event.type === 'disconnected') {
         holdRef.current = false
@@ -259,6 +267,13 @@ export function useDeviceTalk({
       } else if (action === 'end') {
         finishFromSignal()
       }
+    }
+    return () => {
+      voiceStartRef.current = async () => { throw new Error('尚未进入频道') }
+      startUplinkRef.current = () => {}
+      stopUplinkRef.current = async () => {}
+      leaveRoomRef.current = async () => {}
+      volumeControl.current = () => {}
     }
   })
 
@@ -324,6 +339,7 @@ export function useDeviceTalk({
     })()
     return () => {
       cancelled = true
+      if (roomRef.current === room) roomRef.current = null
       const wasTalking = wantRef.current
       wantRef.current = false
       holdRef.current = false
@@ -358,7 +374,7 @@ export function useDeviceTalk({
   useEffect(() => { roomRef.current?.setVolume(volume) }, [volume])
 
   function press(fromKeyboard = false) {
-    if (commanding || viewRef.current !== 'ready' || holdRef.current) {
+    if (sendingDisabled || commanding || viewRef.current !== 'ready' || holdRef.current) {
       return
     }
     const room = roomRef.current

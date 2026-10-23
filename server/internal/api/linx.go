@@ -77,7 +77,7 @@ func LinxChat(users *user.Service, channels *channel.Service, hub *ws.Hub, gate 
 			writeJSON(w, http.StatusBadRequest, errorBody("缺少话术或 session_id"))
 			return
 		}
-		u, err := users.UserByDeviceID(r.Context(), deviceID)
+		u, err := users.Store.UserByLinxDeviceID(r.Context(), deviceID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSON(w, http.StatusNotFound, errorBody("设备未绑定用户"))

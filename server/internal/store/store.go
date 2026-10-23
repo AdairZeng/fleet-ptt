@@ -27,6 +27,15 @@ type User struct {
 	CreatedAt   time.Time
 }
 
+type Device struct {
+	DeviceID       string
+	UserID         string
+	LinxDeviceID   string
+	CredentialHash string
+	BoundAt        time.Time
+	LastConnected  time.Time
+}
+
 // Store 是单个 SQLite 连接。
 type Store struct {
 	db *sql.DB
@@ -90,6 +99,15 @@ func (s *Store) migrate() error {
 			current_channel_id TEXT,
 			talking INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS devices (
+			device_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			linx_device_id TEXT NOT NULL DEFAULT '',
+			credential_hash TEXT NOT NULL DEFAULT '',
+			bound_at INTEGER NOT NULL,
+			last_connected INTEGER NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS devices_linx_id ON devices(linx_device_id) WHERE linx_device_id <> ''`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -97,6 +115,25 @@ func (s *Store) migrate() error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) DeviceByID(ctx context.Context, deviceID string) (Device, error) {
+	return scanDevice(s.db.QueryRowContext(ctx, `SELECT device_id, user_id, linx_device_id, credential_hash, bound_at, last_connected FROM devices WHERE device_id = ?`, deviceID))
+}
+
+func scanDevice(row *sql.Row) (Device, error) {
+	var d Device
+	var bound, connected int64
+	err := row.Scan(&d.DeviceID, &d.UserID, &d.LinxDeviceID, &d.CredentialHash, &bound, &connected)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	if err != nil {
+		return Device{}, err
+	}
+	d.BoundAt = time.Unix(bound, 0).UTC()
+	d.LastConnected = time.Unix(connected, 0).UTC()
+	return d, nil
 }
 
 // UpsertUser 按 device_id 绑定用户。

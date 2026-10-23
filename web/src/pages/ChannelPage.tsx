@@ -115,6 +115,7 @@ export function ChannelPage(props: DeviceChannelProps) {
           stopUplinkRef={stopUplinkRef}
           leaveRoomRef={leaveRoomRef}
           commanding={inCommand}
+          sendingDisabled={busy}
           onVoiceUplink={finishCommand}
           onRoomChange={setRoom}
           onCommand={() => void onCommand()}

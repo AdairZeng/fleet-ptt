@@ -9,7 +9,7 @@ RUN npm run build
 
 FROM golang:1.25-alpine AS go-build
 WORKDIR /src/server
-COPY server/go.mod ./
+COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/fleet-ptt ./cmd/server

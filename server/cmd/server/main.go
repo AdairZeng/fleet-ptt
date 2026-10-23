@@ -9,15 +9,30 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/AdairZeng/fleet-ptt/server/internal/store"
+	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
 
 func main() {
 	addr := getenv("HTTP_ADDR", ":8080")
 	staticDir := getenv("STATIC_DIR", "web/dist")
+	dbPath := getenv("SQLITE_PATH", "data/fleet-ptt.db")
+
+	st, err := store.Open(dbPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer st.Close()
+
+	svc := &user.Service{Store: st, Secret: os.Getenv("SESSION_SECRET")}
+	if svc.Secret == "" {
+		log.Print("SESSION_SECRET is empty; POST /api/v1/session will fail until it is set")
+	}
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(staticDir),
+		Handler:           newHandler(staticDir, svc),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

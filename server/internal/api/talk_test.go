@@ -263,6 +263,87 @@ func TestChannelSignals(t *testing.T) {
 	_ = driver.Close(websocket.StatusNormalClosure, "")
 }
 
+func TestSwitchChannelStopsTalk(t *testing.T) {
+	h := newMux(newService(t))
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	captainToken, captainID := sessionPair(t, h, "队长", "device-captain")
+	driverToken, driverID := sessionPair(t, h, "司机乙", "device-driver")
+	loading := createChannel(t, h, captainToken, "装货")
+	unloading := createChannel(t, h, captainToken, "卸货")
+	joinCode(t, h, captainToken, loading.JoinCode)
+	joinCode(t, h, driverToken, loading.JoinCode)
+
+	driver := dialWS(t, srv, driverToken, false)
+	driverBox := collectWS(t, driver)
+	driverBox.wait(t, 1)
+	captain := dialWS(t, srv, captainToken, false)
+	captainBox := collectWS(t, captain)
+	captainBox.wait(t, 1)
+
+	if res := postAuth(t, h, "/api/v1/talk/start", captainToken, `{}`); res.Code != http.StatusOK {
+		t.Fatalf("start %d %s", res.Code, res.Body)
+	}
+	driverBox.wait(t, 3)
+	captainBox.wait(t, 3)
+
+	res := postAuth(t, h, "/api/v1/channels/current", captainToken, `{"channel_id":"`+unloading.ChannelID+`"}`)
+	if res.Code != http.StatusOK {
+		t.Fatalf("switch %d %s", res.Code, res.Body)
+	}
+	var switched channelJSON
+	decode(t, res, &switched)
+	if switched.ChannelID != unloading.ChannelID || switched.Name != "卸货" || switched.Role != "owner" {
+		t.Fatalf("switched %+v", switched)
+	}
+
+	driverBox.wait(t, 5)
+	left := driverBox.snapshot()
+	if left[3].Type != "talk_end" || left[3].ChannelID != loading.ChannelID || left[3].UserID != captainID {
+		t.Fatalf("talk_end %#v", left[3])
+	}
+	if left[4].Type != "members" || left[4].ChannelID != loading.ChannelID || hasMember(left[4], captainID, "队长", true) {
+		t.Fatalf("old members %#v", left[4])
+	}
+	for _, ev := range left {
+		if ev.Type == "channel_switched" {
+			t.Fatalf("driver saw switch %#v", ev)
+		}
+	}
+	if hasMember(left[4], driverID, "司机乙", true) {
+		t.Fatalf("driver marked talking %#v", left[4].Members)
+	}
+
+	captainBox.wait(t, 7)
+	events := captainBox.snapshot()
+	if events[3].Type != "talk_end" || events[3].ChannelID != loading.ChannelID || events[3].UserID != captainID {
+		t.Fatalf("captain talk_end %#v", events[3])
+	}
+	if events[4].Type != "members" || events[4].ChannelID != loading.ChannelID {
+		t.Fatalf("captain old members %#v", events[4])
+	}
+	if events[5].Type != "channel_switched" || events[5].ChannelID != unloading.ChannelID || events[5].Name != "卸货" {
+		t.Fatalf("channel_switched %#v", events[5])
+	}
+	if events[6].Type != "members" || events[6].ChannelID != unloading.ChannelID || !hasMember(events[6], captainID, "队长", false) {
+		t.Fatalf("new members %#v", events[6])
+	}
+	if hasMember(events[6], driverID, "司机乙", false) {
+		t.Fatalf("driver listed on new channel %#v", events[6].Members)
+	}
+
+	again := postAuth(t, h, "/api/v1/channels/current", captainToken, `{"channel_id":"`+unloading.ChannelID+`"}`)
+	if again.Code != http.StatusOK {
+		t.Fatalf("same %d %s", again.Code, again.Body)
+	}
+	if time.Sleep(150 * time.Millisecond); len(captainBox.snapshot()) != 7 || len(driverBox.snapshot()) != 5 {
+		t.Fatalf("same channel emitted captain %#v driver %#v", captainBox.snapshot(), driverBox.snapshot())
+	}
+	_ = captain.Close(websocket.StatusNormalClosure, "")
+	_ = driver.Close(websocket.StatusNormalClosure, "")
+}
+
 type wsEvent struct {
 	raw       string
 	Type      string `json:"type"`

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test test/talk.test.ts test/room.test.ts test/signaling.test.ts",
+    "test": "node --test test/talk.test.ts test/room.test.ts test/signaling.test.ts test/channel.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

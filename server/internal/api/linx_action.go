@@ -27,6 +27,9 @@ type voiceResult struct {
 func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.Time) linxchat.Result {
 	parsed := linxchat.Parse(msg)
 	wasTalking, talkErr := e.stopUplink(ctx, u.ID, parsed.Intent)
+	if talkErr != nil && !errors.Is(talkErr, channel.ErrNoCurrent) {
+		return linxchat.Result{Intent: parsed.Intent, Answer: "停止发送失败，操作未执行"}
+	}
 	if parsed.Intent != linxchat.IntentJoinChannel &&
 		parsed.Intent != linxchat.IntentConfirmJoin &&
 		parsed.Intent != linxchat.IntentCancelJoin {
@@ -45,7 +48,7 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	case linxchat.IntentSwitchChannel:
 		out = e.switchChannel(ctx, u.ID, parsed)
 	case linxchat.IntentTalkStart:
-		out = e.talkStart(ctx, u.ID)
+		out = e.talkStart(ctx, u.ID, u.DeviceID)
 	case linxchat.IntentTalkEnd:
 		out = e.talkEnd(talkErr, wasTalking)
 	case linxchat.IntentListChannels:
@@ -66,6 +69,15 @@ func (e voiceExec) stopUplink(ctx context.Context, userID string, intent linxcha
 	talking, err := e.channels.Talking(ctx, userID)
 	if err != nil && !errors.Is(err, channel.ErrNoCurrent) {
 		log.Printf("linx: talking: %v", err)
+	}
+	if talking {
+		u, lookupErr := e.channels.Store.UserByID(ctx, userID)
+		if lookupErr != nil {
+			return talking, lookupErr
+		}
+		if stopErr := e.hub.Execute(ctx, u.DeviceID, "talk_end", "", ""); stopErr != nil {
+			return talking, stopErr
+		}
 	}
 	if _, endErr := e.hub.EndTalk(ctx, userID); endErr != nil && !errors.Is(endErr, channel.ErrNoCurrent) {
 		log.Printf("linx: stop uplink: %v", endErr)
@@ -158,18 +170,30 @@ func (e voiceExec) switchChannel(ctx context.Context, userID string, parsed linx
 	if _, err := e.hub.Switch(ctx, userID, target.ID); err != nil {
 		return fail(linxchat.IntentSwitchChannel, voiceErr(err, "切换频道失败"))
 	}
+	u, lookupErr := e.channels.Store.UserByID(ctx, userID)
+	if lookupErr != nil {
+		return fail(linxchat.IntentSwitchChannel, "读取设备失败")
+	}
+	if err := e.hub.Execute(ctx, u.DeviceID, "switch_channel", target.ID, ""); err != nil {
+		return fail(linxchat.IntentSwitchChannel, err.Error())
+	}
 	if already {
 		return voiceResult{Intent: linxchat.IntentSwitchChannel, Answer: "已经在" + target.Name}
 	}
 	return voiceResult{Intent: linxchat.IntentSwitchChannel, Answer: "已切换到" + target.Name}
 }
 
-func (e voiceExec) talkStart(ctx context.Context, userID string) voiceResult {
+func (e voiceExec) talkStart(ctx context.Context, userID, deviceID string) voiceResult {
+	view, err := e.channels.Current(ctx, userID)
+	if err != nil {
+		return fail(linxchat.IntentTalkStart, voiceErr(err, "还没有进入频道"))
+	}
+	if err := e.hub.Execute(ctx, deviceID, "talk_start", view.Channel.ID, ""); err != nil {
+		return fail(linxchat.IntentTalkStart, err.Error())
+	}
 	if _, err := e.hub.StartTalk(ctx, userID); err != nil {
-		if errors.Is(err, channel.ErrNoCurrent) {
-			return fail(linxchat.IntentTalkStart, "还没有进入频道。请先建群或加入口令")
-		}
-		return fail(linxchat.IntentTalkStart, voiceErr(err, "暂时没能开始对讲"))
+		_ = e.hub.Execute(ctx, deviceID, "talk_end", view.Channel.ID, "")
+		return fail(linxchat.IntentTalkStart, voiceErr(err, "更新发送状态失败"))
 	}
 	return voiceResult{Intent: linxchat.IntentTalkStart, Answer: "已开始对讲"}
 }

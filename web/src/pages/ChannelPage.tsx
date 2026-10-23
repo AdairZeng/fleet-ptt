@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import type { DeviceCommand } from '../signaling/index.ts'
 import type { DeviceAction } from '../device/DeviceShell.tsx'
 import type { DeviceEvent } from '../device/controller.ts'
 import { JoinQR } from './JoinQR.tsx'
@@ -73,7 +74,9 @@ export function ChannelPage({
     talk: 'out',
   })
   const [roomChannelID, setRoomChannelID] = useState('')
+  const voiceStartRef = useRef<(signal: AbortSignal) => Promise<void>>(async () => { throw new Error('尚未进入频道') })
   const startUplinkRef = useRef<() => void>(() => {})
+  const latestRoom = useRef({ channelID: '', view: 'joining' })
   const commandGeneration = useRef(0)
   const stopUplinkRef = useRef<() => Promise<void>>(async () => {})
   const leaveRoomRef = useRef<() => Promise<void>>(async () => {})
@@ -189,6 +192,38 @@ export function ChannelPage({
     [finishCommand],
   )
   const signaling = useChannelSignaling(session, {
+    executeAction: async (action: DeviceCommand, signal: AbortSignal) => {
+      if (signal.aborted) throw new Error('动作已取消')
+      if (action.action === 'talk_end') {
+        await stopUplinkRef.current()
+      } else if (action.action === 'talk_start') {
+        if (!channel || action.channel_id !== channel.channel_id || busy) throw new Error('设备尚未准备好发送')
+        finishCommand()
+        await voiceStartRef.current(signal)
+      } else if (action.action === 'switch_channel') {
+        await stopUplinkRef.current()
+        if (signal.aborted) throw new Error('动作已取消')
+        const next = await fetchMe(session)
+        if (!next.channel || next.channel.channel_id !== action.channel_id) throw new Error('目标频道不匹配')
+        if (channel?.channel_id !== next.channel.channel_id) {
+          await leaveRoomRef.current()
+          if (signal.aborted) throw new Error('动作已取消')
+          setChannel(toChannel(next.channel))
+        }
+        await new Promise<void>((resolve, reject) => {
+          const start = Date.now()
+          const check = () => {
+            if (signal.aborted) { reject(new Error('动作已取消')); return }
+            if (latestRoom.current.channelID === action.channel_id && latestRoom.current.view === 'ready') { resolve(); return }
+            if (Date.now() - start > 12000) { reject(new Error('进房超时')); return }
+            window.setTimeout(check, 50)
+          }
+          check()
+        })
+      } else {
+        throw new Error('尚不支持该设备动作')
+      }
+    },
     onChannelCreated,
     onChannelSwitched,
     onError: onSignalError,
@@ -332,6 +367,10 @@ export function ChannelPage({
     setRoom({ view: 'joining', talk: 'out' })
   }
   useEffect(() => {
+    latestRoom.current = { channelID: activeChannelID, view: room.view }
+  }, [activeChannelID, room.view])
+
+  useEffect(() => {
     if (inCommand) onDeviceEvent({ type: 'COMMAND_START' })
     else onDeviceEvent({ type: 'MEDIA_STATE', ready: Boolean(channel) && room.view === 'ready', talking: room.talk === 'talking', failed: Boolean(channel) && room.view === 'error' })
   }, [channel, inCommand, room, onDeviceEvent])
@@ -423,6 +462,7 @@ export function ChannelPage({
           channelId={channel.channel_id}
           members={roster}
           subscribe={signaling.subscribe}
+          voiceStartRef={voiceStartRef}
           startUplinkRef={startUplinkRef}
           stopUplinkRef={stopUplinkRef}
           leaveRoomRef={leaveRoomRef}

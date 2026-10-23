@@ -54,6 +54,7 @@ export function TalkPanel({
   const [view, setView] = useState<View>('joining')
   const [talk, setTalk] = useState<TalkPhase>('out')
   const [error, setError] = useState('')
+  const [publishing, setPublishing] = useState(false)
   const [listenHint, setListenHint] = useState('')
   const [attempt, setAttempt] = useState(0)
   const roomRef = useRef<RtnRoom | null>(null)
@@ -89,8 +90,10 @@ export function TalkPanel({
       return
     }
     try {
+      setPublishing(true)
       const result = await room.startPublish()
       if (generation.current !== gen || result === 'cancelled') {
+        setPublishing(false)
         await room.stopPublish()
         if (generation.current === gen || !wantRef.current) {
           wantRef.current = false
@@ -103,11 +106,14 @@ export function TalkPanel({
         }
         return
       }
+      setPublishing(false)
+      setTalk((phase) => (phase === 'out' ? phase : 'talking'))
     } catch (err) {
       if (generation.current !== gen) {
         return
       }
       wantRef.current = false
+      setPublishing(false)
       holdRef.current = false
       setTalk((phase) => reduceTalk(phase, 'TALK_END'))
       setError(err instanceof Error ? err.message : '无法打开麦克风')
@@ -150,7 +156,14 @@ export function TalkPanel({
   function stopLocal(): Promise<void> {
     const gen = ++generation.current
     wantRef.current = false
+    setPublishing(false)
     setTalk((phase) => reduceTalk(phase, 'TALK_END'))
+    const stopPublish = roomRef.current?.stopPublish() ?? Promise.resolve()
+    void stopPublish.catch((err: unknown) => {
+      if (generation.current === gen) {
+        setError(err instanceof Error ? err.message : '停止发送失败')
+      }
+    })
     const run = tailRef.current.then(async () => {
       if (generation.current !== gen) {
         return
@@ -162,10 +175,6 @@ export function TalkPanel({
           setError(err instanceof Error ? err.message : '对讲状态更新失败')
         }
       }
-      if (generation.current !== gen) {
-        return
-      }
-      await roomRef.current?.stopPublish()
     })
     tailRef.current = run.then(
       () => undefined,
@@ -187,7 +196,6 @@ export function TalkPanel({
     const gen = ++generation.current
     wantRef.current = true
     setError('')
-    setTalk((phase) => (phase === 'out' ? phase : 'talking'))
     enqueue(async () => {
       if (generation.current !== gen || !wantRef.current) {
         return
@@ -307,6 +315,25 @@ export function TalkPanel({
     }
   }, [session, channelId, attempt])
 
+  useEffect(() => {
+    const stopIfSending = () => {
+      if (holdRef.current || wantRef.current) {
+        end()
+      }
+    }
+    const stopWhenHidden = () => {
+      if (document.visibilityState === 'hidden') {
+        stopIfSending()
+      }
+    }
+    window.addEventListener('blur', stopIfSending)
+    document.addEventListener('visibilitychange', stopWhenHidden)
+    return () => {
+      window.removeEventListener('blur', stopIfSending)
+      document.removeEventListener('visibilitychange', stopWhenHidden)
+    }
+  })
+
   function press(fromKeyboard = false) {
     if (commanding || viewRef.current !== 'ready' || holdRef.current) {
       return
@@ -324,7 +351,6 @@ export function TalkPanel({
     wantRef.current = true
     suppressRef.current += 1
     setError('')
-    setTalk((phase) => reduceTalk(phase, 'TALK_START'))
     enqueue(() => localStart(gen))
   }
 
@@ -460,7 +486,7 @@ export function TalkPanel({
               }
             }}
           >
-            {talking ? '松开结束' : '按住说话'}
+            {publishing ? '松开结束' : holdRef.current ? '准备发送' : '按住说话'}
           </button>
           <div className="dock-side">
             <button

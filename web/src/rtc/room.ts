@@ -35,13 +35,14 @@ export type RtnEvents = {
 }
 
 export type RtnTransport = {
-  join(token: string, events: RtnEvents): Promise<RtnConnection>
+  join(token: string, events: RtnEvents, signal: AbortSignal): Promise<RtnConnection>
   createMic(): Promise<LocalMic>
 }
 
 export class RtnRoom {
   private tail: Promise<unknown> = Promise.resolve()
   private conn: RtnConnection | null = null
+  private lifetime = new AbortController()
   private mic: LocalMic | null = null
   private published = false
   private want = false
@@ -49,7 +50,7 @@ export class RtnRoom {
   private generation = 0
   private volume = 1
   private playing = new Map<string, { stop(): void; setVolume?(volume: number): void }>()
-  private pendingAudio = new Set<string>()
+  private pendingAudio = new Map<string, object>()
   private speakerTracks = new Map<string, Set<string>>()
 
   private readonly transport: RtnTransport
@@ -68,7 +69,7 @@ export class RtnRoom {
       const conn = await this.transport.join(token, {
         onPublished: (live, userId, tracks) => this.handlePublished(live, userId, tracks),
         onUnpublished: (live, userId, tracks) => this.handleUnpublished(live, userId, tracks),
-      })
+      }, this.lifetime.signal)
       if (this.closed) {
         await conn.leave()
         return
@@ -144,6 +145,7 @@ export class RtnRoom {
 
   leave(): Promise<void> {
     this.closed = true
+    this.lifetime.abort()
     this.want = false
     this.generation += 1
     // Local capture/playback must not wait behind an unresolved SDK publish.
@@ -160,7 +162,7 @@ export class RtnRoom {
     this.onSpeakers([])
     const conn = this.conn
     this.conn = null
-    // A connection still joining is closed by join() when its result arrives.
+    // The abort signal also closes a connection that is still joining.
     return conn?.leave() ?? Promise.resolve()
   }
 
@@ -183,23 +185,21 @@ export class RtnRoom {
     if (fresh.length === 0) {
       return
     }
-    for (const track of fresh) {
-      this.pendingAudio.add(track.id)
-    }
+    const subscription = {}
+    for (const track of fresh) this.pendingAudio.set(track.id, subscription)
     let audio: RemoteAudio[]
     try {
       audio = await conn.subscribe(fresh)
-    } finally {
+    } catch (error) {
       for (const track of fresh) {
-        this.pendingAudio.delete(track.id)
+        if (this.pendingAudio.get(track.id) === subscription) this.pendingAudio.delete(track.id)
       }
+      throw error
     }
-    if (this.closed) {
-      return
-    }
+    if (this.closed) return
     let changed = false
     for (const track of audio) {
-      if (!track.id || this.playing.has(track.id)) {
+      if (!track.id || this.pendingAudio.get(track.id) !== subscription || this.playing.has(track.id)) {
         continue
       }
       const playback = track.play()
@@ -210,6 +210,9 @@ export class RtnRoom {
       this.speakerTracks.set(track.userId || userId, ids)
       changed = true
     }
+    for (const track of fresh) {
+      if (this.pendingAudio.get(track.id) === subscription) this.pendingAudio.delete(track.id)
+    }
     if (changed) {
       this.emitSpeakers()
     }
@@ -218,6 +221,7 @@ export class RtnRoom {
   private handleUnpublished(_conn: RtnConnection, userId: string, tracks: RemoteTrack[]) {
     let changed = false
     for (const track of tracks) {
+      this.pendingAudio.delete(track.id)
       const playing = this.playing.get(track.id)
       if (!playing) {
         continue

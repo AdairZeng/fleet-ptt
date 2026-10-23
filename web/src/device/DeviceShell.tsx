@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from '
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
+import type { DevicePhase } from './controller.ts'
 
 export type DeviceAction = 'power' | 'command' | 'ptt-start' | 'ptt-end'
 
@@ -9,6 +10,7 @@ type DeviceShellProps = {
   children: ReactNode
   status: string
   onAction?: (action: DeviceAction) => void
+  phase?: DevicePhase
 }
 
 type DeviceScene = {
@@ -22,7 +24,7 @@ type DeviceScene = {
 
 const modelURL = '/models/xiaolu.glb'
 
-export function DeviceShell({ children, status, onAction = () => {} }: DeviceShellProps) {
+export function DeviceShell({ children, status, onAction = () => {}, phase = 'standby' }: DeviceShellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [modelState, setModelState] = useState<'loading' | 'model' | 'gray'>('loading')
   const [pttHeld, setPttHeld] = useState(false)
@@ -92,6 +94,7 @@ export function DeviceShell({ children, status, onAction = () => {} }: DeviceShe
             type="button"
             className="device-hotspot device-command-hotspot"
             aria-label="指令和结束键"
+            disabled={phase === 'off' || phase === 'booting' || phase === 'processing'}
             onClick={() => trigger('command')}
           >
             指令
@@ -100,6 +103,7 @@ export function DeviceShell({ children, status, onAction = () => {} }: DeviceShe
             type="button"
             className={`device-hotspot device-ptt-hotspot${pttHeld ? ' held' : ''}`}
             aria-label="按住说话"
+            disabled={phase !== 'listening' && phase !== 'talking'}
             onPointerDown={onPTTDown}
             onPointerUp={onPTTUp}
             onPointerCancel={onPTTUp}

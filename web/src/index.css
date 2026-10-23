@@ -13,6 +13,162 @@ body {
   margin: 0;
 }
 
+.device-page {
+  min-height: 100dvh;
+  padding: 1.25rem 1rem calc(2rem + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(30, 64, 175, 0.12), transparent 34rem),
+    var(--page);
+}
+
+.device-stage {
+  width: min(100%, 46rem);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(14rem, 19rem) minmax(12rem, 18rem);
+  align-items: center;
+  justify-content: center;
+  gap: clamp(1rem, 4vw, 2.5rem);
+}
+
+.device-canvas-wrap {
+  position: relative;
+  min-height: 32rem;
+  border-radius: 2rem;
+  background: linear-gradient(145deg, #dbeafe, #eef2ff 46%, #cbd5e1);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08), 0 1rem 3rem rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+
+.device-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 32rem;
+}
+
+.device-model-note {
+  position: absolute;
+  top: 0.7rem;
+  left: 0.8rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  color: #334155;
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.device-hotspot {
+  position: absolute;
+  z-index: 2;
+  min-width: 4.2rem;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 0.7rem;
+  background: rgba(15, 23, 42, 0.74);
+  box-shadow: 0 0.35rem 0.7rem rgba(15, 23, 42, 0.18);
+  color: #fff;
+  font-size: 0.76rem;
+  touch-action: none;
+}
+
+.device-hotspot:hover,
+.device-hotspot:focus-visible,
+.device-hotspot.held {
+  background: #0f766e;
+  outline: 2px solid rgba(20, 184, 166, 0.45);
+  outline-offset: 2px;
+}
+
+.device-power-hotspot { top: 13%; right: 8%; }
+.device-command-hotspot { top: 48%; right: 5%; }
+.device-ptt-hotspot { top: 42%; left: 4%; }
+
+.device-screen {
+  min-height: 20rem;
+  padding: 0.8rem;
+  box-sizing: border-box;
+  border: 0.8rem solid #111827;
+  border-radius: 1.7rem;
+  background: #e5e7eb;
+  box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.18);
+  overflow: auto;
+}
+
+.device-screen-status {
+  margin: -0.2rem -0.2rem 0.7rem;
+  padding: 0.25rem 0.4rem;
+  border-bottom: 1px solid #cbd5e1;
+  color: #475569;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.device-screen > main {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.device-screen main.talk-page {
+  min-height: auto;
+  padding: 0;
+}
+
+.device-screen .talk-bar {
+  position: static;
+  padding-top: 0;
+}
+
+.device-screen .talk-stage {
+  margin-top: 0.55rem;
+}
+
+.device-screen .talk-glance {
+  font-size: clamp(1.8rem, 8vw, 3rem);
+}
+
+.device-screen .talk-dock {
+  position: static;
+  margin: 0.8rem -0.8rem -0.8rem;
+  padding: 0.65rem;
+  border-top: 1px solid #cbd5e1;
+}
+
+.device-screen .manual-jumps,
+.device-screen .manual {
+  font-size: 0.8rem;
+}
+
+.device-screen .manual-jumps a {
+  min-height: 2.2rem;
+  padding: 0.2rem 0.55rem;
+}
+
+@media (max-width: 44rem) {
+  .device-stage {
+    grid-template-columns: 1fr;
+    max-width: 30rem;
+  }
+
+  .device-canvas-wrap {
+    min-height: 24rem;
+  }
+
+  .device-canvas-wrap canvas {
+    height: 24rem;
+  }
+
+  .device-screen {
+    min-height: 16rem;
+  }
+}
+
 main {
   max-width: 40rem;
   margin: 0 auto;

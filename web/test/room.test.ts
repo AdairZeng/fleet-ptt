@@ -75,7 +75,9 @@ test('release before publish finishes does not leave the mic up', async () => {
   await room.join('room-token')
   const pending = room.startPublish()
   await enteredGate
+  assert.equal(fake.muted, false)
   const stopped = room.stopPublish()
+  assert.equal(fake.muted, true, 'release must mute without waiting for publish')
   releasePublish()
   assert.equal(await pending, 'cancelled')
   await stopped
@@ -107,6 +109,7 @@ test('release during microphone capture destroys the track and does not publish'
   const stopped = room.stopPublish()
   let destroyed = false
   releaseMic({
+    setMuted() {},
     destroy() {
       destroyed = true
     },
@@ -146,6 +149,15 @@ test('start before join fails and does not publish', async () => {
   assert.equal(fake.calls.includes('publish'), false)
 })
 
+test('publish failure mutes and destroys the captured microphone', async () => {
+  const fake = new FakeTransport({ publish: async () => { throw new Error('publish failed') } })
+  const room = new RtnRoom(fake)
+  await room.join('room-token')
+  await assert.rejects(room.startPublish(), /publish failed/)
+  assert.equal(fake.muted, true)
+  assert.equal(fake.destroyed, 1)
+})
+
 test('duplicate remote audio is subscribed once', async () => {
   const fake = new FakeTransport()
   const room = new RtnRoom(fake)
@@ -162,6 +174,7 @@ class FakeTransport implements RtnTransport {
   mics = 0
   destroyed = 0
   published = false
+  muted = true
   events!: RtnEvents
   conn!: RtnConnection
 
@@ -216,6 +229,9 @@ class FakeTransport implements RtnTransport {
     }
     this.mics += 1
     return Promise.resolve({
+      setMuted: (muted) => {
+        this.muted = muted
+      },
       destroy: () => {
         this.destroyed += 1
       },

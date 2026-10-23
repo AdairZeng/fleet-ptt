@@ -126,6 +126,7 @@ export function TalkPanel({
   }
 
   async function localStart(gen: number) {
+    if (generation.current !== gen || !wantRef.current) return
     try {
       await startTalk(sessionRef.current)
     } catch (err) {
@@ -135,6 +136,7 @@ export function TalkPanel({
       suppressRef.current = Math.max(0, suppressRef.current - 1)
       wantRef.current = false
       holdRef.current = false
+      setPublishing(false)
       setTalk((phase) => reduceTalk(phase, 'TALK_END'))
       setError(err instanceof Error ? err.message : '对讲状态更新失败')
       return
@@ -180,10 +182,7 @@ export function TalkPanel({
       () => undefined,
       () => undefined,
     )
-    return run.then(
-      () => undefined,
-      () => undefined,
-    )
+    return stopPublish
   }
 
   function beginFromSignal() {
@@ -196,6 +195,7 @@ export function TalkPanel({
     const gen = ++generation.current
     wantRef.current = true
     setError('')
+    setPublishing(true)
     enqueue(async () => {
       if (generation.current !== gen || !wantRef.current) {
         return
@@ -282,9 +282,7 @@ export function TalkPanel({
           return
         }
         setViewNow('ready')
-        setTalk((phase) =>
-          wantRef.current ? 'talking' : reduceTalk(phase, 'JOINED_CHANNEL'),
-        )
+        setTalk((phase) => reduceTalk(phase, 'JOINED_CHANNEL'))
         if (wantRef.current) {
           const gen = generation.current
           enqueue(async () => {
@@ -351,6 +349,7 @@ export function TalkPanel({
     wantRef.current = true
     suppressRef.current += 1
     setError('')
+    setPublishing(true)
     enqueue(() => localStart(gen))
   }
 
@@ -463,6 +462,7 @@ export function TalkPanel({
             onPointerDown={onPointerDown}
             onPointerUp={release}
             onPointerCancel={release}
+            onLostPointerCapture={release}
             onKeyDown={(event) => {
               if (
                 event.repeat ||
@@ -486,7 +486,7 @@ export function TalkPanel({
               }
             }}
           >
-            {publishing ? '松开结束' : holdRef.current ? '准备发送' : '按住说话'}
+            {publishing ? '准备发送' : talking ? '松开结束' : '按住说话'}
           </button>
           <div className="dock-side">
             <button

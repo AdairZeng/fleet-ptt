@@ -11,6 +11,7 @@ import (
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/api"
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
@@ -105,8 +106,16 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, dest any) {
 }
 
 func newMux(svc *user.Service) http.Handler {
+	return newMuxWithSigner(svc, rtn.Signer{
+		AccessKey: "test-ak",
+		SecretKey: "test-sk",
+		AppID:     "test-app",
+	})
+}
+
+func newMuxWithSigner(svc *user.Service, signer rtn.Signer) http.Handler {
 	mux := http.NewServeMux()
-	api.Register(mux, svc, &channel.Service{Store: svc.Store})
+	api.Register(mux, svc, &channel.Service{Store: svc.Store}, signer)
 	return mux
 }
 

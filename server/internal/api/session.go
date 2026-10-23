@@ -8,15 +8,17 @@ import (
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
 
-// Register 挂上会话、当前用户，以及频道创建 / 加入接口。
-func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service) {
+// Register 挂上会话、当前用户、频道，以及 RTN RoomToken。
+func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer) {
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
 	mux.HandleFunc("GET /api/v1/me", Me(users, channels))
 	mux.HandleFunc("POST /api/v1/channels", CreateChannel(users, channels))
 	mux.HandleFunc("POST /api/v1/channels/join", JoinChannel(users, channels))
+	mux.HandleFunc("GET /api/v1/channels/{id}/rtn-token", RoomToken(users, channels, tokens))
 }
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。

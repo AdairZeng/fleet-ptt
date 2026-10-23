@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
@@ -31,10 +32,18 @@ func main() {
 		log.Print("SESSION_SECRET is empty; POST /api/v1/session will fail until it is set")
 	}
 	channels := &channel.Service{Store: st}
+	tokens := rtn.Signer{
+		AccessKey: os.Getenv("QINIU_ACCESS_KEY"),
+		SecretKey: os.Getenv("QINIU_SECRET_KEY"),
+		AppID:     os.Getenv("QINIU_RTN_APP_ID"),
+	}
+	if !tokens.Configured() {
+		log.Print("QINIU_ACCESS_KEY, QINIU_SECRET_KEY, or QINIU_RTN_APP_ID is empty; GET /api/v1/channels/{id}/rtn-token will fail until they are set")
+	}
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(staticDir, svc, channels),
+		Handler:           newHandler(staticDir, svc, channels, tokens),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

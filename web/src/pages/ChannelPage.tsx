@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { TalkPanel } from './TalkPanel.tsx'
 import { createChannel, joinChannelByCode, type Channel } from '../state/channel.ts'
 import { fetchMe, type Me, type MeChannel, type Session } from '../state/session.ts'
 
@@ -112,6 +113,8 @@ export function ChannelPage({
       ) : (
         <p className="hint">还没有当前频道。创建一个频道，或输入队长给你的 6 位口令。</p>
       )}
+
+      {channel ? <TalkPanel key={channel.channel_id} session={session} channelId={channel.channel_id} /> : null}
 
       <section>
         <h2>创建频道</h2>

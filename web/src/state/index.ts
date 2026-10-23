@@ -1,2 +1,1 @@
-// 对讲状态机占位：InChannel、CommandListening、Talking。
-export {}
+export { reduceTalk, type TalkEvent, type TalkPhase } from './talk.ts'

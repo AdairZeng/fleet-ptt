@@ -1,0 +1,228 @@
+// 进房只订阅。startPublish 才采集并推麦克风，stopPublish / leave 会停上行。
+export type PublishResult = 'published' | 'cancelled'
+
+export type RemoteTrack = {
+  id: string
+  userId: string
+  audio: boolean
+}
+
+export type RemoteAudio = {
+  id: string
+  userId: string
+  play(): { stop(): void }
+}
+
+export type LocalMic = {
+  destroy(): void
+}
+
+export type RtnConnection = {
+  publish(mic: LocalMic): Promise<void>
+  unpublish(mic: LocalMic): Promise<void>
+  subscribe(tracks: RemoteTrack[]): Promise<RemoteAudio[]>
+  leave(): Promise<void>
+}
+
+export type RtnEvents = {
+  onPublished: (
+    conn: RtnConnection,
+    userId: string,
+    tracks: RemoteTrack[],
+  ) => void | Promise<void>
+  onUnpublished: (conn: RtnConnection, userId: string, tracks: RemoteTrack[]) => void
+}
+
+export type RtnTransport = {
+  join(token: string, events: RtnEvents): Promise<RtnConnection>
+  createMic(): Promise<LocalMic>
+}
+
+export class RtnRoom {
+  private tail: Promise<unknown> = Promise.resolve()
+  private conn: RtnConnection | null = null
+  private mic: LocalMic | null = null
+  private published = false
+  private want = false
+  private closed = false
+  private playing = new Map<string, { stop(): void }>()
+  private pendingAudio = new Set<string>()
+  private speakerTracks = new Map<string, Set<string>>()
+
+  private readonly transport: RtnTransport
+  private readonly onSpeakers: (userIds: string[]) => void
+
+  constructor(transport: RtnTransport, onSpeakers: (userIds: string[]) => void = () => {}) {
+    this.transport = transport
+    this.onSpeakers = onSpeakers
+  }
+
+  join(token: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.closed || this.conn) {
+        return
+      }
+      const conn = await this.transport.join(token, {
+        onPublished: (live, userId, tracks) => this.handlePublished(live, userId, tracks),
+        onUnpublished: (live, userId, tracks) => this.handleUnpublished(live, userId, tracks),
+      })
+      if (this.closed) {
+        await conn.leave()
+        return
+      }
+      this.conn = conn
+    })
+  }
+
+  async startPublish(): Promise<PublishResult> {
+    if (this.closed) {
+      throw new Error('已经离开频道')
+    }
+    this.want = true
+    return this.enqueue(async () => {
+      if (this.closed || !this.want) {
+        return 'cancelled'
+      }
+      if (!this.conn) {
+        throw new Error('还没有进入频道')
+      }
+      if (this.published) {
+        return 'published'
+      }
+      if (!this.mic) {
+        const mic = await this.transport.createMic()
+        if (this.closed || !this.want) {
+          mic.destroy()
+          return 'cancelled'
+        }
+        this.mic = mic
+      }
+      if (!this.want || !this.conn) {
+        return 'cancelled'
+      }
+      await this.conn.publish(this.mic)
+      if (this.closed || !this.want) {
+        await this.conn.unpublish(this.mic)
+        this.published = false
+        return 'cancelled'
+      }
+      this.published = true
+      return 'published'
+    })
+  }
+
+  stopPublish(): Promise<void> {
+    this.want = false
+    return this.enqueue(async () => {
+      if (this.published && this.mic && this.conn) {
+        await this.conn.unpublish(this.mic)
+        this.published = false
+      }
+    })
+  }
+
+  leave(): Promise<void> {
+    this.closed = true
+    this.want = false
+    return this.enqueue(async () => {
+      if (this.published && this.mic && this.conn) {
+        await this.conn.unpublish(this.mic)
+        this.published = false
+      }
+      if (this.mic) {
+        this.mic.destroy()
+        this.mic = null
+      }
+      for (const playing of this.playing.values()) {
+        playing.stop()
+      }
+      this.playing.clear()
+      this.speakerTracks.clear()
+      this.onSpeakers([])
+      if (this.conn) {
+        await this.conn.leave()
+        this.conn = null
+      }
+    })
+  }
+
+  private async handlePublished(conn: RtnConnection, userId: string, tracks: RemoteTrack[]) {
+    if (this.closed) {
+      return
+    }
+    const fresh = tracks.filter(
+      (track) =>
+        track.audio &&
+        track.id &&
+        !this.playing.has(track.id) &&
+        !this.pendingAudio.has(track.id),
+    )
+    if (fresh.length === 0) {
+      return
+    }
+    for (const track of fresh) {
+      this.pendingAudio.add(track.id)
+    }
+    let audio: RemoteAudio[]
+    try {
+      audio = await conn.subscribe(fresh)
+    } finally {
+      for (const track of fresh) {
+        this.pendingAudio.delete(track.id)
+      }
+    }
+    if (this.closed) {
+      return
+    }
+    let changed = false
+    for (const track of audio) {
+      if (!track.id || this.playing.has(track.id)) {
+        continue
+      }
+      this.playing.set(track.id, track.play())
+      const ids = this.speakerTracks.get(track.userId || userId) ?? new Set<string>()
+      ids.add(track.id)
+      this.speakerTracks.set(track.userId || userId, ids)
+      changed = true
+    }
+    if (changed) {
+      this.emitSpeakers()
+    }
+  }
+
+  private handleUnpublished(_conn: RtnConnection, userId: string, tracks: RemoteTrack[]) {
+    let changed = false
+    for (const track of tracks) {
+      const playing = this.playing.get(track.id)
+      if (!playing) {
+        continue
+      }
+      playing.stop()
+      this.playing.delete(track.id)
+      const owner = track.userId || userId
+      this.speakerTracks.get(owner)?.delete(track.id)
+      changed = true
+    }
+    for (const [id, tracksForUser] of this.speakerTracks) {
+      if (tracksForUser.size === 0) {
+        this.speakerTracks.delete(id)
+      }
+    }
+    if (changed) {
+      this.emitSpeakers()
+    }
+  }
+
+  private emitSpeakers() {
+    this.onSpeakers([...this.speakerTracks.keys()].sort())
+  }
+
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(task, task)
+    this.tail = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+}

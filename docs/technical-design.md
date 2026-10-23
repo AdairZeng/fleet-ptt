@@ -208,6 +208,7 @@ PTT：按下 = publish；松开 = unpublish；可与 `talk_start`/`talk_end` 共
 | GET | `/api/v1/channels/:id/rtn-token` | 签发七牛 RoomToken |
 | POST | `/api/v1/talk/start` | 标记 talking + 广播信令（指令路径也会调内部同一逻辑） |
 | POST | `/api/v1/talk/end` | 结束上行 |
+| POST | `/api/v1/linx/chat` | 灵矽 Chat SSE 回调，Bearer 为 `LINX_CHAT_TOKEN` |
 
 ### 6.2 WebSocket 信令（Go ↔ 本机 React）
 
@@ -256,6 +257,8 @@ SSE 响应：`event: message` + `type: chat` 的 `answer` 文案供 TTS；需要
 
 口令相关 `answer` 须适合逐位朗读（如「口令是 3、8、4、2、9、1」）。
 
+实现约定见 [灵矽接入结论](./linx-access.md)：`Authorization` 必须等于 `LINX_CHAT_TOKEN`；`device_id` 必须已绑定用户；成功时先返回 `answer`，再返回 `message_end`。关键词路由目前只返回占位文案，建群、入群、切群与对讲的执行不在这条回调里。
+
 ---
 
 ## 7. 七牛 RTN 接入
@@ -292,7 +295,7 @@ SSE 响应：`event: message` + `type: chat` 的 `answer` 文案供 TTS；需要
 | device_id | 与 `users.device_id` 一致，指令才能路由到对的 WS 连接 |
 | MCP | 与 Chat 同构后挂，不阻塞 MVP |
 
-**H5 作为灵矽设备：** 实现前验证 WebSocket 伪设备或官方 Web/小程序入口。若 H5 无法直连，采用「指令页（灵矽）+ 对讲页（本应用）」双页，靠同一 `device_id` / 账号绑定对齐；对讲与信令仍在本仓库 React + Go。
+**H5 作为灵矽设备：** 已按公开协议核对，结论是双页。浏览器 `WebSocket` 不能携带握手必需的 `Authorization`、`Device-Id`、`Client-Id`、`Protocol-Version`，公开文档也没有 H5 设备 SDK。指令页留在灵矽，对讲页与信令留在本仓库 React + Go，靠同一个 `device_id` 对齐。详见 [灵矽接入结论](./linx-access.md)。
 
 指令音流与 RTN 上行默认不同时占用同一采集策略：进入 `CommandListening` 时若正在 Talking，先 `stopPublish`。
 
@@ -385,7 +388,7 @@ make up
 
 | 风险 | 对策 |
 |------|------|
-| H5 难当灵矽设备 | 先验证；不行则双页 + device 绑定 |
+| H5 难当灵矽设备 | 已核对：MVP 用双页，见 [linx-access.md](./linx-access.md) |
 | 口令 ASR 听错 | 逐位播报 + 入群确认 |
 | 指令与对讲抢麦 | 状态机互斥；开指令先停 publish |
 | 误提交密钥 | `.gitignore`；只用 `.env.example`；Code Review 检查 |

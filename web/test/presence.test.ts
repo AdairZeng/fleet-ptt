@@ -37,7 +37,7 @@ test('related room states keep their existing copy', () => {
   assert.equal(talkPresence('ready', 'out', false), 'listening')
   assert.equal(presenceCopy(idlePresence(false)).label, '未进频道')
   assert.equal(presenceCopy(idlePresence(true)).label, '指令中')
-  assert.match(presenceCopy('commanding').detail, /灵矽设备上说指令/)
+  assert.match(presenceCopy('commanding').detail, /语音暂未就绪，请使用屏幕操作/)
 })
 
 test('member count and live flag follow the roster', () => {

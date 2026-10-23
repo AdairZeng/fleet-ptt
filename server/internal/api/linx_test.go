@@ -128,7 +128,7 @@ func TestLinxVoiceCreateJoinSwitchAndTalk(t *testing.T) {
 	driverToken, _ := sessionPair(t, h, "司机乙", "device-driver")
 
 	captain := dialWS(t, srv, captainToken, false)
-	captainBox := collectWS(t, captain)
+	captainBox := collectDeviceWS(t, captain, true)
 	events := waitLinx(t, captainBox, 3, func() *httptest.ResponseRecorder {
 		return postLinx(t, h, token, linxBody("device-captain", "建一个装货频道", "s-create"))
 	})
@@ -146,7 +146,7 @@ func TestLinxVoiceCreateJoinSwitchAndTalk(t *testing.T) {
 
 	loading := got[0]
 	driver := dialWS(t, srv, driverToken, false)
-	driverBox := collectWS(t, driver)
+	driverBox := collectDeviceWS(t, driver, true)
 	prompt := waitLinx(t, driverBox, 1, func() *httptest.ResponseRecorder {
 		return postLinx(t, h, token, linxBody("device-driver", "加入口令 "+loading.JoinCode, "s-join-1"))
 	})

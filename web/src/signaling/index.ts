@@ -219,12 +219,18 @@ export function openSignaling(session: Session, onEvent: (event: SignalEvent) =>
       }
       if (event) onEvent(event)
     }
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (closed) {
         return
       }
       cancelActions()
       onEvent({ type: 'disconnected' })
+      if (event.code === 4001) {
+        closed = true
+        window.clearInterval(ping)
+        onEvent({ type: 'error', message: '设备已在另一页面连接，请关闭重复页面' })
+        return
+      }
       timer = window.setTimeout(connect, delay)
       delay = Math.min(delay * 2, 10000)
     }

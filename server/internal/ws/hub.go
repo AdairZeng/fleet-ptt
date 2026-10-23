@@ -342,7 +342,7 @@ func (h *Hub) add(c *client) {
 	if previous := h.devices[c.deviceID]; previous != nil && previous != c {
 		delete(set, previous)
 		previous.closeSend()
-		_ = previous.conn.CloseNow()
+		go previous.conn.Close(websocket.StatusCode(4001), "设备已在另一页面连接")
 		for id, action := range h.actions {
 			if action.client == previous {
 				select {

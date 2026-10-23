@@ -8,10 +8,13 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
+	"github.com/AdairZeng/fleet-ptt/server/internal/ws"
 )
 
 const maxLinxSessionIDBytes = 128
@@ -41,8 +44,9 @@ type linxSSEDetails struct {
 
 // LinxChat 处理 POST /api/v1/linx/chat。
 // token 为 LINX_CHAT_TOKEN，对应灵矽请求头 Authorization: Bearer。
-// 为空时拒绝全部回调。device_id 必须已绑定用户。意图只返回占位文案。
-func LinxChat(users *user.Service, token string) http.HandlerFunc {
+// 为空时拒绝全部回调。device_id 必须已绑定用户。
+// 识别到的建群、入群、切群、对讲和列表会执行，并用 SSE answer 供 TTS；结果同时推到该用户的 WebSocket。
+func LinxChat(users *user.Service, channels *channel.Service, hub *ws.Hub, gate *linxchat.JoinGate, token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			log.Print("linx chat: LINX_CHAT_TOKEN is empty")
@@ -73,7 +77,8 @@ func LinxChat(users *user.Service, token string) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, errorBody("缺少话术或 session_id"))
 			return
 		}
-		if _, err := users.UserByDeviceID(r.Context(), deviceID); err != nil {
+		u, err := users.UserByDeviceID(r.Context(), deviceID)
+		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSON(w, http.StatusNotFound, errorBody("设备未绑定用户"))
 				return
@@ -82,7 +87,8 @@ func LinxChat(users *user.Service, token string) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, errorBody("读取用户失败"))
 			return
 		}
-		writeLinxSSE(w, sessionID, linxchat.Classify(msg))
+		exec := voiceExec{channels: channels, hub: hub, gate: gate}
+		writeLinxSSE(w, sessionID, exec.run(r.Context(), u, msg, time.Now()))
 	}
 }
 

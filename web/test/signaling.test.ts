@@ -79,4 +79,9 @@ test('parseSignal drops malformed events', () => {
     name: '装货',
     join_code: '3842K9',
   })
+  assert.deepEqual(parseSignal(JSON.stringify({ type: 'notice', message: '已切换到装货' })), {
+    type: 'notice',
+    message: '已切换到装货',
+  })
+  assert.equal(parseSignal(JSON.stringify({ type: 'notice' })), null)
 })

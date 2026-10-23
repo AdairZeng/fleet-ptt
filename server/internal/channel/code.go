@@ -27,6 +27,16 @@ func newJoinCode() (string, error) {
 	return string(out), nil
 }
 
+// NormalizeJoinCode 去掉空白并转成大写，方便司机照着空格分开的口令输入。
+func NormalizeJoinCode(raw string) string {
+	return normalizeCode(raw)
+}
+
+// ValidJoinCode 报告是不是 6 位可读口令。调用方需先去掉分隔符并转成大写。
+func ValidJoinCode(code string) bool {
+	return validCode(code)
+}
+
 // normalizeCode 去掉空白并转成大写，方便司机照着空格分开的口令输入。
 func normalizeCode(raw string) string {
 	out := make([]rune, 0, len(raw))

@@ -12,7 +12,7 @@
 
 仓库仅提供 [`.env.example`](.env.example)。本地复制为 `.env` 后填写真实值，勿提交 `.env`。
 
-`LINX_CHAT_TOKEN` 留空时，`POST /api/v1/linx/chat` 会拒绝回调。灵矽侧要配置的地址是 `{PUBLIC_BASE_URL}/api/v1/linx/chat`。
+`LINX_CHAT_TOKEN` 留空时，`POST /api/v1/linx/chat` 会拒绝回调。灵矽侧要配置的地址是 `{PUBLIC_BASE_URL}/api/v1/linx/chat`。这条回调会执行语音建群、入群、切群、开始对讲和列出频道。建群口令逐位返回；口令入群需要再说一次相同口令才进房。
 
 ## 本地启动
 

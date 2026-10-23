@@ -13,6 +13,7 @@ export type SignalEvent =
   | { type: 'channel_created'; channel_id: string; name: string; join_code: string }
   | { type: 'channel_switched'; channel_id: string; name: string }
   | { type: 'error'; message: string }
+  | { type: 'notice'; message: string }
   | { type: 'pong' }
 
 export type Rosters = Record<string, Member[]>
@@ -36,7 +37,8 @@ export function parseSignal(raw: string): SignalEvent | null {
     case 'pong':
       return { type: 'pong' }
     case 'error':
-      return typeof rec.message === 'string' ? { type: 'error', message: rec.message } : null
+    case 'notice':
+      return typeof rec.message === 'string' ? { type: rec.type, message: rec.message } : null
     case 'talk_start':
     case 'talk_end':
       if (typeof rec.channel_id !== 'string' || typeof rec.user_id !== 'string') {

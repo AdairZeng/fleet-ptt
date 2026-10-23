@@ -96,7 +96,7 @@ func CreateChannel(users *user.Service, hub *ws.Hub) http.HandlerFunc {
 }
 
 // JoinChannel 接受 { code } 或 { name }。口令优先。加入后设为当前频道。
-// 频道变化时给该用户推 channel_switched；若离开的频道上正在对讲，先广播 talk_end。
+// 频道变化时给该用户推 channel_switched，包括第一次进房；若离开的频道上正在对讲，先广播 talk_end。
 func JoinChannel(users *user.Service, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, ok := requireUser(users, w, r)

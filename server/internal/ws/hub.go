@@ -164,8 +164,8 @@ func (h *Hub) Create(ctx context.Context, userID, name string, now time.Time) (c
 	return view, nil
 }
 
-// Join 加入频道。当前频道变化时给该用户推 channel_switched。
-// 离开正在对讲的频道时，先广播 talk_end。
+// Join 加入频道。当前频道有变化时给该用户推 channel_switched，包括从没有频道变成进入频道。
+// 语音入群靠这条信令让 H5 进房。离开正在对讲的频道时，先广播 talk_end。
 func (h *Hub) Join(ctx context.Context, userID, code, name string) (channel.View, error) {
 	ctx = context.WithoutCancel(ctx)
 	h.mu.Lock()
@@ -179,8 +179,8 @@ func (h *Hub) Join(ctx context.Context, userID, code, name string) (channel.View
 	if err != nil {
 		return channel.View{}, err
 	}
-	if prevID != "" && prevID != view.Channel.ID {
-		if wasTalking {
+	if prevID != view.Channel.ID {
+		if wasTalking && prevID != "" {
 			if err := h.channels.SetTalking(ctx, userID, false); err != nil {
 				return channel.View{}, err
 			}
@@ -237,6 +237,16 @@ func (h *Hub) StartTalk(ctx context.Context, userID string) (channel.View, error
 	}
 	h.publishTalk(ctx, view.Channel.ID, userID, true)
 	return view, nil
+}
+
+// PushText 把一句提示发给该用户的连接。typ 为 notice 或 error，供页面提示。
+func (h *Hub) PushText(userID, typ, message string) {
+	if userID == "" || message == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.enqueueUser(userID, encode(errorWire{Type: typ, Message: message}))
 }
 
 // EndTalk 结束当前用户的对讲。已经不在讲时不重复广播。

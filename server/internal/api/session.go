@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 	"github.com/AdairZeng/fleet-ptt/server/internal/ws"
@@ -17,6 +18,7 @@ import (
 // linxToken 是 LINX_CHAT_TOKEN。为空时回调一律拒绝。
 func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string) {
 	hub := ws.NewHub(users, channels)
+	gate := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
 	mux.HandleFunc("GET /api/v1/me", Me(users, channels))
 	mux.HandleFunc("GET /api/v1/channels", ListChannels(users, channels))
@@ -27,7 +29,7 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("POST /api/v1/talk/start", TalkStart(users, hub))
 	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
 	mux.HandleFunc("GET /api/v1/ws", hub.ServeHTTP)
-	mux.HandleFunc("POST /api/v1/linx/chat", LinxChat(users, linxToken))
+	mux.HandleFunc("POST /api/v1/linx/chat", LinxChat(users, channels, hub, gate, linxToken))
 }
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。

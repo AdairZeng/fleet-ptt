@@ -11,6 +11,7 @@ import {
   switchListeningChannel,
   type Channel,
 } from '../state/channel.ts'
+import { commandToggle } from '../state/command.ts'
 import {
   clearJoinLocation,
   invalidJoinQRMessage,
@@ -47,6 +48,9 @@ export function ChannelPage({
   const [listRevision, setListRevision] = useState(0)
   const [switchError, setSwitchError] = useState('')
   const [switchNotice, setSwitchNotice] = useState('')
+  const [voiceNotice, setVoiceNotice] = useState('')
+  const [commanding, setCommanding] = useState(false)
+  const [arming, setArming] = useState(false)
   const stopUplinkRef = useRef<() => Promise<void>>(async () => {})
   const leaveRoomRef = useRef<() => Promise<void>>(async () => {})
   const switchingRef = useRef(false)
@@ -109,6 +113,9 @@ export function ChannelPage({
     },
     [channel, refreshChannels, session],
   )
+  const finishCommand = useCallback(() => {
+    setCommanding(false)
+  }, [])
   const onChannelCreated = useCallback(
     (event: { channel_id: string; name: string; join_code: string }) => {
       setChannel({
@@ -117,12 +124,14 @@ export function ChannelPage({
         join_code: event.join_code,
         role: 'owner',
       })
+      finishCommand()
       refreshChannels()
     },
-    [refreshChannels],
+    [finishCommand, refreshChannels],
   )
   const onChannelSwitched = useCallback(() => {
     refreshChannels()
+    finishCommand()
     if (switchingRef.current) {
       return
     }
@@ -135,11 +144,28 @@ export function ChannelPage({
       .catch((err: unknown) => {
         setSignalError(err instanceof Error ? err.message : '切换频道失败')
       })
-  }, [refreshChannels, session])
+  }, [finishCommand, refreshChannels, session])
+  const onSignalError = useCallback(
+    (message: string) => {
+      setSignalError(message)
+      setVoiceNotice('')
+      finishCommand()
+    },
+    [finishCommand],
+  )
+  const onNotice = useCallback(
+    (message: string) => {
+      setVoiceNotice(message)
+      setSignalError('')
+      finishCommand()
+    },
+    [finishCommand],
+  )
   const signaling = useChannelSignaling(session, {
     onChannelCreated,
     onChannelSwitched,
-    onError: setSignalError,
+    onError: onSignalError,
+    onNotice,
   })
 
   useEffect(() => {
@@ -250,7 +276,25 @@ export function ChannelPage({
     }
   }
 
+  async function onCommand() {
+    const next = commandToggle(commanding)
+    if (!next.stopUplink) {
+      setCommanding(false)
+      return
+    }
+    setArming(true)
+    try {
+      await stopUplinkRef.current()
+      setCommanding(true)
+      setVoiceNotice('')
+      setSignalError('')
+    } finally {
+      setArming(false)
+    }
+  }
+
   const busy = pending !== ''
+  const inCommand = commanding || arming
 
   return (
     <main>
@@ -266,6 +310,11 @@ export function ChannelPage({
         <p>正在确认身份…</p>
       )}
       {signalError ? <p className="error">{signalError}</p> : null}
+      {voiceNotice ? (
+        <p className="hint" role="status">
+          {voiceNotice}
+        </p>
+      ) : null}
       {linkError ? (
         <p className="error" role="alert">
           {linkError}
@@ -291,7 +340,7 @@ export function ChannelPage({
           <JoinQR origin={window.location.origin} code={channel.join_code} name={channel.name} />
         </section>
       ) : (
-        <p className="hint">还没有当前频道。创建一个频道，或输入队长给你的 6 位口令。</p>
+        <p className="hint">还没有当前频道。创建一个频道，输入口令，或点指令麦后在灵矽设备上说。</p>
       )}
 
       {channel ? (
@@ -303,6 +352,8 @@ export function ChannelPage({
           subscribe={signaling.subscribe}
           stopUplinkRef={stopUplinkRef}
           leaveRoomRef={leaveRoomRef}
+          commanding={inCommand}
+          onVoiceUplink={finishCommand}
         />
       ) : null}
 
@@ -391,6 +442,23 @@ export function ChannelPage({
           </button>
         </form>
         <ScanJoin disabled={busy} onCode={(nextCode) => void enterByCode(nextCode, 'qr')} />
+      </section>
+
+      <section className="command-bar">
+        <button
+          type="button"
+          className={inCommand ? 'command on' : 'command'}
+          disabled={busy || arming}
+          aria-pressed={inCommand}
+          onClick={() => void onCommand()}
+        >
+          {inCommand ? '结束指令' : '指令麦'}
+        </button>
+        {inCommand ? (
+          <p className="hint" role="status">
+            指令中。上行已关闭，请在灵矽设备上说指令。
+          </p>
+        ) : null}
       </section>
 
       <button type="button" className="secondary" onClick={onChangeNickname}>

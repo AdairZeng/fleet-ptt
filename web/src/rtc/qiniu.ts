@@ -107,6 +107,9 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
         throw new Error(`无法打开麦克风：${detail}`)
       }
       const mic: LocalMic = {
+        setMuted(muted) {
+          track.setMuted(muted)
+        },
         destroy() {
           track.destroy()
         },

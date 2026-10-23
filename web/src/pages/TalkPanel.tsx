@@ -1,20 +1,30 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { createQiniuRoom, type RtnRoom } from '../rtc/index.ts'
 import {
   endTalk,
   observeSelfTalk,
-  remoteSpeakers,
   selfTalkAction,
   speakingText,
   startTalk,
   type Member,
   type SignalEvent,
 } from '../signaling/index.ts'
+import { memberIsLive } from '../state/presence.ts'
 import { fetchRoomToken } from '../state/rtn.ts'
-import { reduceTalk, type TalkPhase } from '../state/talk.ts'
 import type { Session } from '../state/session.ts'
+import { reduceTalk, type TalkPhase } from '../state/talk.ts'
 
 type View = 'joining' | 'ready' | 'error'
+
+export type RoomSnapshot = {
+  view: View
+  talk: TalkPhase
+}
 
 export function TalkPanel({
   session,
@@ -25,6 +35,9 @@ export function TalkPanel({
   leaveRoomRef,
   commanding,
   onVoiceUplink,
+  onRoomChange,
+  onCommand,
+  commandDisabled,
 }: {
   session: Session
   channelId: string
@@ -34,6 +47,9 @@ export function TalkPanel({
   leaveRoomRef: { current: () => Promise<void> }
   commanding: boolean
   onVoiceUplink: () => void
+  onRoomChange: (room: RoomSnapshot) => void
+  onCommand: () => void
+  commandDisabled: boolean
 }) {
   const [view, setView] = useState<View>('joining')
   const [talk, setTalk] = useState<TalkPhase>('out')
@@ -204,7 +220,11 @@ export function TalkPanel({
     }
     leaveRoomRef.current = () => roomRef.current?.leave() ?? Promise.resolve()
     onSignalRef.current = (event) => {
-      const action = selfTalkAction(event, channelIDRef.current, sessionRef.current.user_id)
+      const action = selfTalkAction(
+        event,
+        channelIDRef.current,
+        sessionRef.current.user_id,
+      )
       if (action === 'start') {
         beginFromSignal()
       } else if (action === 'end') {
@@ -216,6 +236,10 @@ export function TalkPanel({
   useEffect(() => {
     return subscribe((event) => onSignalRef.current(event))
   }, [subscribe])
+
+  useEffect(() => {
+    onRoomChange({ view, talk })
+  }, [view, talk, onRoomChange])
 
   useEffect(() => {
     const sink = sinkRef.current
@@ -250,7 +274,9 @@ export function TalkPanel({
           return
         }
         setViewNow('ready')
-        setTalk((phase) => (wantRef.current ? 'talking' : reduceTalk(phase, 'JOINED_CHANNEL')))
+        setTalk((phase) =>
+          wantRef.current ? 'talking' : reduceTalk(phase, 'JOINED_CHANNEL'),
+        )
         if (wantRef.current) {
           const gen = generation.current
           enqueue(async () => {
@@ -341,22 +367,10 @@ export function TalkPanel({
 
   const joined = view === 'ready'
   const talking = talk === 'talking'
-  const remote = remoteSpeakers(members, session.user_id)
 
   return (
     <section className="talk">
-      <h2>对讲</h2>
-      <p className="talk-status" role="status">
-        {statusText(view, talk, commanding)}
-      </p>
       {error ? <p className="error">{error}</p> : null}
-      <div className="speakers" aria-live="polite">
-        {remote.map((member) => (
-          <p className="speaking" key={member.user_id}>
-            {speakingText(member.display_name)}
-          </p>
-        ))}
-      </div>
       {listenHint ? (
         <p className="hint">
           {listenHint}{' '}
@@ -366,41 +380,38 @@ export function TalkPanel({
         </p>
       ) : null}
       <div ref={sinkRef} className="remote-audio" />
-      <div className="talk-actions">
-        <button
-          type="button"
-          className={talking ? 'ptt talking' : 'ptt'}
-          disabled={!joined || commanding}
-          aria-pressed={talking}
-          onPointerDown={onPointerDown}
-          onPointerUp={release}
-          onPointerCancel={release}
-          onKeyDown={(event) => {
-            if (event.repeat || (event.key !== ' ' && event.key !== 'Enter')) {
-              return
-            }
-            event.preventDefault()
-            press(true)
-          }}
-          onKeyUp={(event) => {
-            if (event.key !== ' ' && event.key !== 'Enter') {
-              return
-            }
-            event.preventDefault()
-            release()
-          }}
-          onBlur={() => {
-            if (keyboardHoldRef.current) {
-              release()
-            }
-          }}
-        >
-          {talking ? '松开结束' : '按住说话'}
-        </button>
-        <button type="button" className="end" disabled={!joined} onClick={end}>
-          结束
-        </button>
-      </div>
+      {members && members.length > 0 ? (
+        <ul className="roster" aria-live="polite">
+          {members.map((member) => {
+            const mine = member.user_id === session.user_id
+            const live = memberIsLive(
+              member.user_id,
+              member.talking,
+              session.user_id,
+              talking,
+            )
+            const name = member.display_name.trim() || '未命名'
+            return (
+              <li
+                className={live ? 'roster-row live' : 'roster-row'}
+                key={member.user_id}
+              >
+                <span className="roster-name">
+                  {name}
+                  {mine ? '（我）' : ''}
+                </span>
+                {live ? (
+                  <span className="roster-live">
+                    {mine ? '你正在说' : speakingText(name)}
+                  </span>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <p className="hint">{members ? '频道里还没有人' : '成员列表同步中'}</p>
+      )}
       {view === 'error' ? (
         <button
           type="button"
@@ -416,24 +427,64 @@ export function TalkPanel({
           重试进房
         </button>
       ) : null}
+      <div className="talk-dock">
+        <div className="talk-dock-inner">
+          <button
+            type="button"
+            className={talking ? 'ptt talking' : 'ptt'}
+            disabled={!joined || commanding}
+            aria-pressed={talking}
+            onPointerDown={onPointerDown}
+            onPointerUp={release}
+            onPointerCancel={release}
+            onKeyDown={(event) => {
+              if (
+                event.repeat ||
+                (event.key !== ' ' && event.key !== 'Enter')
+              ) {
+                return
+              }
+              event.preventDefault()
+              press(true)
+            }}
+            onKeyUp={(event) => {
+              if (event.key !== ' ' && event.key !== 'Enter') {
+                return
+              }
+              event.preventDefault()
+              release()
+            }}
+            onBlur={() => {
+              if (keyboardHoldRef.current) {
+                release()
+              }
+            }}
+          >
+            {talking ? '松开结束' : '按住说话'}
+          </button>
+          <div className="dock-side">
+            <button
+              type="button"
+              className="end"
+              disabled={!joined}
+              onClick={end}
+            >
+              结束
+            </button>
+            <button
+              type="button"
+              className={commanding ? 'command on' : 'command'}
+              disabled={commandDisabled}
+              aria-pressed={commanding}
+              onClick={onCommand}
+            >
+              {commanding ? '结束指令' : '指令麦'}
+            </button>
+          </div>
+        </div>
+      </div>
     </section>
   )
-}
-
-function statusText(view: View, talk: TalkPhase, commanding: boolean): string {
-  if (commanding && view !== 'error') {
-    return '指令中'
-  }
-  if (view === 'joining') {
-    return '正在进入频道，只收听…'
-  }
-  if (view === 'error') {
-    return '还没进房'
-  }
-  if (talk === 'talking') {
-    return '正在讲'
-  }
-  return '正在收听'
 }
 
 function isPlaybackBlocked(err: unknown): boolean {

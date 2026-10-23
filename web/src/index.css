@@ -4,6 +4,9 @@
   line-height: 1.5;
   background: #f6f7f9;
   color: #1a1d23;
+  --page: #f6f7f9;
+  --card: #fff;
+  --line: #c5c8d0;
 }
 
 body {
@@ -126,24 +129,199 @@ p.join-code {
   letter-spacing: 0.35rem;
 }
 
-p.talk-status {
-  margin-top: 0.75rem;
-  font-weight: 600;
+main.talk-page {
+  padding: 0 1rem calc(12.5rem + env(safe-area-inset-bottom));
+  min-height: 100dvh;
+  box-sizing: border-box;
 }
 
-.speakers {
-  display: grid;
-  gap: 0.35rem;
-  margin-top: 0.35rem;
+.talk-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0 0.45rem;
+  background: var(--page);
 }
 
-.speakers:empty {
-  display: none;
+.talk-bar-title {
+  min-width: 0;
 }
 
-p.speaking {
+.talk-bar .kicker {
   margin-top: 0;
+}
+
+.talk-bar h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.talk-bar-meta {
+  display: grid;
+  justify-items: end;
+  gap: 0.25rem;
+  flex: none;
+  padding-top: 0.15rem;
+}
+
+.presence {
+  margin: 0;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.member-count {
+  margin: 0;
+  font-size: 0.8125rem;
   font-weight: 600;
+}
+
+.talk-stage {
+  margin-top: 0.75rem;
+  padding: 1.15rem 0.75rem 1.2rem;
+  border-radius: 1rem;
+  text-align: center;
+}
+
+.talk-glance {
+  margin: 0;
+  font-size: clamp(2.6rem, 14vw, 4.25rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.talk-detail {
+  margin: 0.45rem auto 0;
+  max-width: 22rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.stage-listening,
+.presence-listening {
+  background: #d1fae5;
+  color: #064e3b;
+}
+
+.stage-commanding,
+.presence-commanding {
+  background: #99f6e4;
+  color: #134e4a;
+}
+
+.stage-talking,
+.presence-talking {
+  background: #fecaca;
+  color: #7f1d1d;
+}
+
+.stage-joining,
+.presence-joining {
+  background: #e0e7ff;
+  color: #312e81;
+}
+
+.stage-offline,
+.presence-offline {
+  background: #fde68a;
+  color: #78350f;
+}
+
+.stage-idle,
+.presence-idle {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+.talk {
+  margin-top: 0.85rem;
+}
+
+.talk > button.secondary {
+  width: 100%;
+}
+
+.roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.roster-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+
+.roster-row.live {
+  border-color: #b91c1c;
+  background: #fff1f2;
+}
+
+.roster-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.roster-live {
+  flex: none;
+  color: #b91c1c;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.manual-jumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.manual-jumps a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: inherit;
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.manual h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.manual section,
+.manual .channel-list {
+  scroll-margin-top: 4.75rem;
+}
+
+.manual form button[type='submit'],
+.manual .scan-join button {
+  width: 100%;
 }
 
 .remote-audio {
@@ -155,10 +333,34 @@ p.speaking {
   pointer-events: none;
 }
 
-.talk-actions {
+.talk-dock {
+  position: fixed;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  padding: 0.7rem 1rem calc(0.7rem + env(safe-area-inset-bottom));
+  background: var(--page);
+  border-top: 1px solid var(--line);
+}
+
+.talk-dock-inner {
   display: grid;
-  gap: 0.75rem;
-  margin-top: 1rem;
+  gap: 0.6rem;
+  width: min(40rem, 100%);
+  margin: 0 auto;
+}
+
+.talk-dock button {
+  width: 100%;
+  margin-top: 0;
+}
+
+.dock-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
 }
 
 button.ptt,
@@ -168,8 +370,8 @@ button.end {
 }
 
 button.ptt {
-  min-height: 4.75rem;
-  font-size: 1.25rem;
+  min-height: 5.5rem;
+  font-size: 1.35rem;
   border-radius: 999px;
   background: #b91c1c;
   touch-action: none;
@@ -180,16 +382,16 @@ button.ptt.talking {
   background: #7f1d1d;
 }
 
+button.end,
+button.command {
+  min-height: 3.25rem;
+}
+
 button.end {
   background: #1f2937;
 }
 
-.command-bar {
-  margin-top: 1.75rem;
-}
-
 button.command {
-  width: 100%;
   margin-top: 0;
   background: #0f766e;
 }
@@ -198,8 +400,9 @@ button.command.on {
   background: #115e59;
 }
 
-.command-bar .hint {
-  margin-top: 0.75rem;
+button.command.solo {
+  min-height: 5.5rem;
+  font-size: 1.2rem;
 }
 
 .channel-list ul {
@@ -259,10 +462,13 @@ button.command.on {
 
 .join-qr img {
   display: block;
+  width: min(280px, 100%);
+  height: auto;
   margin-top: 0.5rem;
   padding: 0.5rem;
   background: #fff;
   border-radius: 0.5rem;
+  box-sizing: border-box;
 }
 
 .join-qr .hint,
@@ -298,6 +504,58 @@ main > .error {
   :root {
     background: #14161c;
     color: #f3f4f6;
+    --page: #14161c;
+    --card: #1c1f27;
+    --line: #3a3f4b;
+  }
+
+  .stage-listening,
+  .presence-listening {
+    background: #064e3b;
+    color: #d1fae5;
+  }
+
+  .stage-commanding,
+  .presence-commanding {
+    background: #115e59;
+    color: #ccfbf1;
+  }
+
+  .stage-talking,
+  .presence-talking {
+    background: #7f1d1d;
+    color: #fee2e2;
+  }
+
+  .stage-joining,
+  .presence-joining {
+    background: #312e81;
+    color: #e0e7ff;
+  }
+
+  .stage-offline,
+  .presence-offline {
+    background: #78350f;
+    color: #fef3c7;
+  }
+
+  .stage-idle,
+  .presence-idle {
+    background: #374151;
+    color: #f3f4f6;
+  }
+
+  .roster-row.live {
+    background: #3f1d1d;
+    border-color: #fca5a5;
+  }
+
+  .roster-live {
+    color: #fca5a5;
+  }
+
+  .manual h2 {
+    color: #d1d5db;
   }
 
   input {

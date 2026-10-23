@@ -1,0 +1,20 @@
+---
+description: 代码变更必须以 PR 形式合并，禁止直接推 main
+alwaysApply: true
+---
+
+# PR 提交流程
+
+本仓库所有功能与修复代码均通过 Pull Request 合并，不要直接 push 到 `main`。
+
+## 流程
+
+1. 从最新 `main` 拉出功能分支（如 `feat/xxx`、`fix/xxx`）
+2. 在分支上提交（conventional commits：`英文类型: 中文描述`）
+3. push 功能分支后用 `gh pr create` 开 PR
+4. 用户确认后再合并；合并后可删除已合并分支
+
+## 例外
+
+- 仅当用户明确说「直接推 main」时，才可跳过 PR
+- 纯本地未要求提交的草稿改动，不必强行开 PR

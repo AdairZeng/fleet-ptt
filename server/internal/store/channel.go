@@ -143,6 +143,95 @@ func (s *Store) MemberRole(ctx context.Context, userID, channelID string) (strin
 	return role, nil
 }
 
+// Membership 是用户已加入的一个频道，以及他在里面的角色。
+type Membership struct {
+	Channel Channel
+	Role    string
+}
+
+// ListMemberships 返回用户加入的频道，按创建时间排序。同一秒内按写入顺序。
+func (s *Store) ListMemberships(ctx context.Context, userID string) ([]Membership, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.id, c.name, c.join_code, c.created_by, c.created_at, m.role
+		FROM memberships AS m
+		JOIN channels AS c ON c.id = m.channel_id
+		WHERE m.user_id = ?
+		ORDER BY c.created_at, c.rowid`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Membership{}
+	for rows.Next() {
+		var item Membership
+		var created int64
+		if err := rows.Scan(
+			&item.Channel.ID, &item.Channel.Name, &item.Channel.JoinCode,
+			&item.Channel.CreatedBy, &created, &item.Role,
+		); err != nil {
+			return nil, err
+		}
+		item.Channel.CreatedAt = time.Unix(created, 0).UTC()
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// SwitchCurrentChannel 把已加入的频道设为当前频道。
+// 不是成员时返回 ErrNotFound，不改会话。
+// 已经是当前频道时不改 talking。真正换频道时先把 talking 置 0，再改当前频道。
+// 返回值是切换前的频道 id，以及这次是否因此结束了对讲。
+func (s *Store) SwitchCurrentChannel(ctx context.Context, userID, channelID string) (string, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	err = tx.QueryRowContext(ctx, `
+		SELECT 1 FROM memberships WHERE user_id = ? AND channel_id = ?`,
+		userID, channelID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, ErrNotFound
+	}
+	if err != nil {
+		return "", false, err
+	}
+
+	var current sql.NullString
+	var talking int
+	err = tx.QueryRowContext(ctx, `
+		SELECT current_channel_id, talking FROM user_session WHERE user_id = ?`,
+		userID).Scan(&current, &talking)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := setCurrentChannel(ctx, tx, userID, channelID); err != nil {
+			return "", false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return "", false, err
+		}
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	prev := current.String
+	if prev == channelID {
+		return prev, false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE user_session SET current_channel_id = ?, talking = 0 WHERE user_id = ?`,
+		channelID, userID); err != nil {
+		return "", false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, err
+	}
+	return prev, talking != 0, nil
+}
+
 // CurrentChannel 返回用户当前频道及其角色。还没有当前频道时返回 ErrNotFound。
 func (s *Store) CurrentChannel(ctx context.Context, userID string) (Channel, string, error) {
 	const q = `

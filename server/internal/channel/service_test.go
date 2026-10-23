@@ -124,6 +124,112 @@ func TestCreateAndJoin(t *testing.T) {
 	}
 }
 
+func TestListAndSwitch(t *testing.T) {
+	svc := newChannelService(t)
+	ctx := context.Background()
+	now := time.Unix(1_700_000_500, 0).UTC()
+
+	empty, err := svc.List(ctx, "driver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty list %#v", empty)
+	}
+	if _, err := svc.Switch(ctx, "driver", "  "); !errors.Is(err, ErrInvalidSwitch) {
+		t.Fatalf("blank switch err %v", err)
+	}
+
+	loading, err := svc.Create(ctx, "captain", "装货", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unloading, err := svc.Create(ctx, "captain", "卸货", now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Join(ctx, "driver", loading.Channel.JoinCode, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Join(ctx, "driver", unloading.Channel.JoinCode, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := svc.List(ctx, "driver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Channel.ID != loading.Channel.ID || list[0].Role != RoleMember || list[1].Channel.ID != unloading.Channel.ID {
+		t.Fatalf("list %+v", list)
+	}
+	captainList, err := svc.List(ctx, "captain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captainList) != 2 || captainList[0].Role != RoleOwner || captainList[1].Role != RoleOwner {
+		t.Fatalf("captain list %+v", captainList)
+	}
+
+	if err := svc.SetTalking(ctx, "driver", true); err != nil {
+		t.Fatal(err)
+	}
+	same, err := svc.Switch(ctx, "driver", unloading.Channel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.Changed || same.StoppedTalking || same.View.Channel.ID != unloading.Channel.ID {
+		t.Fatalf("same channel %+v", same)
+	}
+	talking, err := svc.Talking(ctx, "driver")
+	if err != nil || !talking {
+		t.Fatalf("same switch talking %v err %v", talking, err)
+	}
+
+	switched, err := svc.Switch(ctx, "driver", " "+loading.Channel.ID+" ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !switched.Changed || !switched.StoppedTalking || switched.PreviousID != unloading.Channel.ID || switched.View.Role != RoleMember {
+		t.Fatalf("switch %+v", switched)
+	}
+	current, err := svc.Current(ctx, "driver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Channel.ID != loading.Channel.ID {
+		t.Fatalf("current %s", current.Channel.ID)
+	}
+	talking, err = svc.Talking(ctx, "driver")
+	if err != nil || talking {
+		t.Fatalf("after switch talking %v err %v", talking, err)
+	}
+
+	if _, err := svc.Switch(ctx, "driver", "missing-channel"); !errors.Is(err, ErrNameNotFound) {
+		t.Fatalf("missing channel err %v", err)
+	}
+	other, err := svc.Create(ctx, "captain", "调度", now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetTalking(ctx, "driver", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Switch(ctx, "driver", other.Channel.ID); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("non-member err %v", err)
+	}
+	current, err = svc.Current(ctx, "driver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Channel.ID != loading.Channel.ID {
+		t.Fatalf("failed switch moved current to %s", current.Channel.ID)
+	}
+	talking, err = svc.Talking(ctx, "driver")
+	if err != nil || !talking {
+		t.Fatalf("failed switch talking %v err %v", talking, err)
+	}
+}
+
 func TestRequireMember(t *testing.T) {
 	svc := newChannelService(t)
 	ctx := context.Background()

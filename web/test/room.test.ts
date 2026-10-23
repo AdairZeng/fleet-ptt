@@ -117,6 +117,28 @@ test('release during microphone capture destroys the track and does not publish'
   assert.equal(fake.calls.includes('publish'), false)
 })
 
+test('switching rooms unpublishes before leave, and the next room only subscribes', async () => {
+  const current = new FakeTransport()
+  const room = new RtnRoom(current)
+  await room.join('room-token')
+  assert.equal(await room.startPublish(), 'published')
+  await room.stopPublish()
+  await room.leave()
+  const unpublishAt = current.calls.lastIndexOf('unpublish')
+  const leaveAt = current.calls.indexOf('leave')
+  assert.ok(unpublishAt >= 0 && unpublishAt < leaveAt)
+
+  const next = new FakeTransport()
+  const nextRoom = new RtnRoom(next)
+  await nextRoom.join('room-token')
+  assert.deepEqual(
+    next.calls.filter((call) => call === 'publish'),
+    [],
+  )
+  assert.ok(next.calls.includes('join'))
+  assert.ok(next.calls.includes('subscribe') || next.subscribed.length > 0)
+})
+
 test('start before join fails and does not publish', async () => {
   const fake = new FakeTransport()
   const room = new RtnRoom(fake)

@@ -32,8 +32,10 @@ var (
 	ErrAmbiguousName = errors.New("有多个同名频道，请改用口令加入")
 	// ErrNoCurrent 表示这个用户还没有当前频道。
 	ErrNoCurrent = errors.New("没有当前频道")
-	// ErrNotMember 表示用户不在这个频道里，不能拿进房凭证。
+	// ErrNotMember 表示用户不在这个频道里，不能拿进房凭证，也不能把它设为当前频道。
 	ErrNotMember = errors.New("还不是这个频道的成员")
+	// ErrInvalidSwitch 表示切换请求没有给出频道。
+	ErrInvalidSwitch = errors.New("请选择频道")
 )
 
 // View 是一次创建或加入的结果，Role 是该用户在频道里的角色。
@@ -118,6 +120,55 @@ func (s *Service) RequireMember(ctx context.Context, userID, channelID string) (
 		return View{}, err
 	}
 	return View{Channel: ch, Role: role}, nil
+}
+
+// List 返回该用户已加入的频道，按创建时间排序。没有加入时得到空列表。
+func (s *Service) List(ctx context.Context, userID string) ([]View, error) {
+	rows, err := s.Store.ListMemberships(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]View, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, View{Channel: row.Channel, Role: row.Role})
+	}
+	return out, nil
+}
+
+// SwitchResult 是一次切换当前频道的结果。
+// Changed 为 false 表示本来就在这个频道，没有改会话，也没有结束对讲。
+// StoppedTalking 表示这次切换前正在对讲，并且已经先把 talking 清掉。
+type SwitchResult struct {
+	View           View
+	PreviousID     string
+	Changed        bool
+	StoppedTalking bool
+}
+
+// Switch 把已加入的频道设为当前频道。
+// 正在对讲时先结束 talking，再改当前频道，避免新频道被标成正在讲。
+func (s *Service) Switch(ctx context.Context, userID, channelID string) (SwitchResult, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return SwitchResult{}, ErrInvalidSwitch
+	}
+	view, err := s.RequireMember(ctx, userID, channelID)
+	if err != nil {
+		return SwitchResult{}, err
+	}
+	prevID, stopped, err := s.Store.SwitchCurrentChannel(ctx, userID, channelID)
+	if errors.Is(err, store.ErrNotFound) {
+		return SwitchResult{}, ErrNotMember
+	}
+	if err != nil {
+		return SwitchResult{}, err
+	}
+	return SwitchResult{
+		View:           view,
+		PreviousID:     prevID,
+		Changed:        prevID != channelID,
+		StoppedTalking: stopped,
+	}, nil
 }
 
 // Current 返回该用户的当前频道。还没有时返回 ErrNoCurrent。

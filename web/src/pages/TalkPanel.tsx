@@ -21,11 +21,15 @@ export function TalkPanel({
   channelId,
   members,
   subscribe,
+  stopUplinkRef,
+  leaveRoomRef,
 }: {
   session: Session
   channelId: string
   members: Member[] | undefined
   subscribe: (listener: (event: SignalEvent) => void) => () => void
+  stopUplinkRef: { current: () => Promise<void> }
+  leaveRoomRef: { current: () => Promise<void> }
 }) {
   const [view, setView] = useState<View>('joining')
   const [talk, setTalk] = useState<TalkPhase>('out')
@@ -123,11 +127,11 @@ export function TalkPanel({
     await publishHeld(gen)
   }
 
-  function stopLocal() {
+  function stopLocal(): Promise<void> {
     const gen = ++generation.current
     wantRef.current = false
     setTalk((phase) => reduceTalk(phase, 'TALK_END'))
-    enqueue(async () => {
+    const run = tailRef.current.then(async () => {
       if (generation.current !== gen) {
         return
       }
@@ -143,6 +147,14 @@ export function TalkPanel({
       }
       await roomRef.current?.stopPublish()
     })
+    tailRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run.then(
+      () => undefined,
+      () => undefined,
+    )
   }
 
   function beginFromSignal() {
@@ -177,6 +189,15 @@ export function TalkPanel({
   useEffect(() => {
     sessionRef.current = session
     channelIDRef.current = channelId
+    stopUplinkRef.current = () => {
+      holdRef.current = false
+      keyboardHoldRef.current = false
+      if (!wantRef.current) {
+        return roomRef.current?.stopPublish() ?? Promise.resolve()
+      }
+      return stopLocal()
+    }
+    leaveRoomRef.current = () => roomRef.current?.leave() ?? Promise.resolve()
     onSignalRef.current = (event) => {
       const action = selfTalkAction(event, channelIDRef.current, sessionRef.current.user_id)
       if (action === 'start') {

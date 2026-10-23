@@ -196,6 +196,32 @@ func (h *Hub) Join(ctx context.Context, userID, code, name string) (channel.View
 	return view, nil
 }
 
+// Switch 切换当前频道。正在对讲时先广播 talk_end，再通知该用户 channel_switched。
+// 已经在目标频道时不发信令，也不结束对讲。
+func (h *Hub) Switch(ctx context.Context, userID, channelID string) (channel.View, error) {
+	ctx = context.WithoutCancel(ctx)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	result, err := h.channels.Switch(ctx, userID, channelID)
+	if err != nil {
+		return channel.View{}, err
+	}
+	if !result.Changed {
+		return result.View, nil
+	}
+	if result.StoppedTalking && result.PreviousID != "" {
+		h.publishTalk(ctx, result.PreviousID, userID, false)
+	}
+	h.enqueueUser(userID, encode(channelSwitchedWire{
+		Type:      "channel_switched",
+		ChannelID: result.View.Channel.ID,
+		Name:      result.View.Channel.Name,
+	}))
+	h.publishMembers(ctx, result.View.Channel.ID)
+	return result.View, nil
+}
+
 // StartTalk 把当前频道标为正在对讲，并向成员广播 talk_start 与 members。
 func (h *Hub) StartTalk(ctx context.Context, userID string) (channel.View, error) {
 	ctx = context.WithoutCancel(ctx)

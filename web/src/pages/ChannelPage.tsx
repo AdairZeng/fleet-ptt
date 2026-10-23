@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { TalkPanel } from './TalkPanel.tsx'
 import { useChannelSignaling } from '../signaling/useChannelSignaling.ts'
-import { createChannel, joinChannelByCode, type Channel } from '../state/channel.ts'
+import {
+  createChannel,
+  joinChannelByCode,
+  listChannels,
+  switchCurrentChannel,
+  switchListeningChannel,
+  type Channel,
+} from '../state/channel.ts'
 import { fetchMe, type Me, type MeChannel, type Session } from '../state/session.ts'
 
 export function ChannelPage({
@@ -18,8 +25,19 @@ export function ChannelPage({
   const [code, setCode] = useState('')
   const [createError, setCreateError] = useState('')
   const [joinError, setJoinError] = useState('')
-  const [pending, setPending] = useState<'create' | 'join' | ''>('')
+  const [pending, setPending] = useState<'create' | 'join' | 'switch' | ''>('')
   const [signalError, setSignalError] = useState('')
+  const [channels, setChannels] = useState<Channel[] | null>(null)
+  const [listError, setListError] = useState('')
+  const [listRevision, setListRevision] = useState(0)
+  const [switchError, setSwitchError] = useState('')
+  const [switchNotice, setSwitchNotice] = useState('')
+  const stopUplinkRef = useRef<() => Promise<void>>(async () => {})
+  const leaveRoomRef = useRef<() => Promise<void>>(async () => {})
+  const switchingRef = useRef(false)
+  const refreshChannels = useCallback(() => {
+    setListRevision((n) => n + 1)
+  }, [])
   const onChannelCreated = useCallback(
     (event: { channel_id: string; name: string; join_code: string }) => {
       setChannel({
@@ -28,10 +46,15 @@ export function ChannelPage({
         join_code: event.join_code,
         role: 'owner',
       })
+      refreshChannels()
     },
-    [],
+    [refreshChannels],
   )
   const onChannelSwitched = useCallback(() => {
+    refreshChannels()
+    if (switchingRef.current) {
+      return
+    }
     fetchMe(session)
       .then((next) => {
         if (next.channel) {
@@ -41,7 +64,7 @@ export function ChannelPage({
       .catch((err: unknown) => {
         setSignalError(err instanceof Error ? err.message : '切换频道失败')
       })
-  }, [session])
+  }, [refreshChannels, session])
   const signaling = useChannelSignaling(session, {
     onChannelCreated,
     onChannelSwitched,
@@ -71,6 +94,26 @@ export function ChannelPage({
     }
   }, [session])
 
+  useEffect(() => {
+    let cancelled = false
+    listChannels(session)
+      .then((next) => {
+        if (cancelled) {
+          return
+        }
+        setChannels(next)
+        setListError('')
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setListError(err instanceof Error ? err.message : '读取频道列表失败')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session, listRevision])
+
   async function onCreate(event: FormEvent) {
     event.preventDefault()
     const nextName = name.trim()
@@ -84,6 +127,8 @@ export function ChannelPage({
       const created = await createChannel(session, nextName)
       setChannel(created)
       setName('')
+      setSwitchNotice('')
+      refreshChannels()
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : '创建频道失败')
     } finally {
@@ -104,9 +149,36 @@ export function ChannelPage({
       const joined = await joinChannelByCode(session, nextCode)
       setChannel(joined)
       setCode('')
+      setSwitchNotice('')
+      refreshChannels()
     } catch (err) {
       setJoinError(err instanceof Error ? err.message : '加入失败')
     } finally {
+      setPending('')
+    }
+  }
+
+  async function onSwitch(target: Channel) {
+    if (pending !== '' || target.channel_id === channel?.channel_id) {
+      return
+    }
+    setPending('switch')
+    setSwitchError('')
+    setSwitchNotice('')
+    switchingRef.current = true
+    try {
+      const next = await switchListeningChannel(
+        () => stopUplinkRef.current(),
+        () => switchCurrentChannel(session, target.channel_id),
+        () => leaveRoomRef.current(),
+      )
+      setChannel(next)
+      setSwitchNotice(`已切换到${next.name}`)
+      refreshChannels()
+    } catch (err) {
+      setSwitchError(err instanceof Error ? err.message : '切换频道失败')
+    } finally {
+      switchingRef.current = false
       setPending('')
     }
   }
@@ -151,8 +223,50 @@ export function ChannelPage({
           channelId={channel.channel_id}
           members={signaling.rosters[channel.channel_id]}
           subscribe={signaling.subscribe}
+          stopUplinkRef={stopUplinkRef}
+          leaveRoomRef={leaveRoomRef}
         />
       ) : null}
+
+      {channels && channels.length > 0 ? (
+        <section className="channel-list">
+          <h2>我的频道</h2>
+          <ul>
+            {channels.map((item) => {
+              const current = item.channel_id === channel?.channel_id
+              return (
+                <li key={item.channel_id}>
+                  {current ? (
+                    <div className="channel-current">
+                      <span>{item.name}</span>
+                      <span className="channel-code">{item.join_code}</span>
+                      <span className="channel-badge">当前</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="channel-pick"
+                      disabled={busy}
+                      onClick={() => void onSwitch(item)}
+                    >
+                      <span>{item.name}</span>
+                      <span className="channel-code">{item.join_code}</span>
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+          {pending === 'switch' ? <p className="hint">正在切换…</p> : null}
+          {switchNotice ? (
+            <p className="hint" role="status">
+              {switchNotice}
+            </p>
+          ) : null}
+          {switchError ? <p className="error">{switchError}</p> : null}
+        </section>
+      ) : null}
+      {listError ? <p className="error">{listError}</p> : null}
 
       <section>
         <h2>创建频道</h2>

@@ -113,4 +113,58 @@ func TestCreateChannelAndJoin(t *testing.T) {
 	if _, _, err := st.CurrentChannel(ctx, "missing-user"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("missing current err %v", err)
 	}
+
+	memberships, err := st.ListMemberships(ctx, driver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memberships) != 1 || memberships[0].Channel.ID != loading.ID || memberships[0].Role != "member" {
+		t.Fatalf("driver memberships %+v", memberships)
+	}
+	captainChannels, err := st.ListMemberships(ctx, captain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captainChannels) != 2 || captainChannels[0].Channel.ID != loading.ID || captainChannels[1].Channel.ID != other.ID || captainChannels[0].Role != "owner" {
+		t.Fatalf("captain memberships %+v", captainChannels)
+	}
+	if _, stopped, err := st.SwitchCurrentChannel(ctx, driver.ID, "missing-channel"); !errors.Is(err, store.ErrNotFound) || stopped {
+		t.Fatalf("missing switch err %v stopped %v", err, stopped)
+	}
+
+	if err := st.SetTalking(ctx, driver.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	prev, stopped, err := st.SwitchCurrentChannel(ctx, driver.ID, loading.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prev != loading.ID || stopped {
+		t.Fatalf("same channel prev %s stopped %v", prev, stopped)
+	}
+	talking, err := st.IsTalking(ctx, driver.ID)
+	if err != nil || !talking {
+		t.Fatalf("same switch talking %v err %v", talking, err)
+	}
+	if _, err := st.JoinChannel(ctx, driver.ID, other.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	prev, stopped, err = st.SwitchCurrentChannel(ctx, driver.ID, loading.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prev != other.ID || !stopped {
+		t.Fatalf("switch prev %s stopped %v", prev, stopped)
+	}
+	current, role, err = st.CurrentChannel(ctx, driver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ID != loading.ID || role != "member" {
+		t.Fatalf("switched current %s role %s", current.ID, role)
+	}
+	talking, err = st.IsTalking(ctx, driver.ID)
+	if err != nil || talking {
+		t.Fatalf("after switch talking %v err %v", talking, err)
+	}
 }

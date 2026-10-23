@@ -184,6 +184,57 @@ button.end {
   background: #1f2937;
 }
 
+.channel-list ul {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.channel-list .channel-current,
+.channel-list button.channel-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  margin-top: 0;
+  padding: 0.55rem 0.85rem;
+  border-radius: 0.5rem;
+  box-sizing: border-box;
+}
+
+.channel-list button.channel-pick {
+  background: transparent;
+  color: inherit;
+  border: 1px solid #c5c8d0;
+  font-weight: 600;
+  text-align: left;
+}
+
+.channel-list .channel-current {
+  border: 1px solid #1d4ed8;
+  font-weight: 600;
+}
+
+.channel-code {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-weight: 500;
+  letter-spacing: 0.12rem;
+  font-size: 0.875rem;
+}
+
+.channel-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.channel-list .hint,
+.channel-list .error {
+  margin-top: 0.75rem;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     background: #14161c;
@@ -196,7 +247,8 @@ button.end {
     border-color: #3a3f4b;
   }
 
-  button.secondary {
+  button.secondary,
+  .channel-list button.channel-pick {
     border-color: #3a3f4b;
   }
 

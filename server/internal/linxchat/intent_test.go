@@ -52,7 +52,7 @@ func TestSpeakCodeAndAnswers(t *testing.T) {
 	if got := CreatedAnswer("装货", "3842K9"); got != "已创建装货。口令是 3、8、4、2、K、9" {
 		t.Fatalf("created %q", got)
 	}
-	if got := ConfirmJoinPrompt("384291"); got != "请再说一次口令确认。口令是 3、8、4、2、9、1" {
+	if got := ConfirmJoinPrompt("384291"); got != "口令是 3、8、4、2、9、1。请说确认加入或取消" {
 		t.Fatalf("confirm %q", got)
 	}
 	if got := ListAnswer(nil, ""); got != "你还没有频道。可以说建一个装货频道，或加入口令" {

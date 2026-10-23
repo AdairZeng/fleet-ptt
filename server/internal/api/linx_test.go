@@ -150,7 +150,7 @@ func TestLinxVoiceCreateJoinSwitchAndTalk(t *testing.T) {
 	prompt := waitLinx(t, driverBox, 1, func() *httptest.ResponseRecorder {
 		return postLinx(t, h, token, linxBody("device-driver", "加入口令 "+loading.JoinCode, "s-join-1"))
 	})
-	if answer := sseAnswer(t, prompt.rec.Body.String()); answer != "请再说一次口令确认。"+speakDigits(loading.JoinCode) {
+	if answer := sseAnswer(t, prompt.rec.Body.String()); answer != speakDigits(loading.JoinCode)+"。请说确认加入或取消" {
 		t.Fatalf("prompt %q", answer)
 	}
 	if prompt.fresh[0].Type != "notice" {
@@ -162,7 +162,7 @@ func TestLinxVoiceCreateJoinSwitchAndTalk(t *testing.T) {
 	}
 
 	joined := waitLinx(t, driverBox, 3, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-driver", "加入口令 "+loading.JoinCode, "s-join-2"))
+		return postLinx(t, h, token, linxBody("device-driver", "确认加入", "s-join-2"))
 	})
 	if answer := sseAnswer(t, joined.rec.Body.String()); answer != "已加入装货" {
 		t.Fatalf("join %q body %s", answer, joined.rec.Body)

@@ -31,10 +31,12 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	parsed := linxchat.Parse(msg)
 	if pending, ok := e.gate.Pending(u.DeviceID, now); ok && parsed.Intent == linxchat.IntentEcho {
 		prefixes := map[string]string{
-			"ask:create": "创建一个", "ask:join": "加入", "ask:switch": "切到",
+			"ask:join": "加入", "ask:switch": "切到",
 			"ask:nickname": "我叫", "ask:volume": "音量调到",
 		}
-		if prefix, ok := prefixes[pending]; ok {
+		if pending == "ask:create" {
+			parsed = linxchat.Utterance{Intent: linxchat.IntentCreateChannel, Name: parsed.Text, Text: parsed.Text}
+		} else if prefix, ok := prefixes[pending]; ok {
 			parsed = linxchat.Parse(prefix + parsed.Text)
 		}
 	}
@@ -173,10 +175,8 @@ func (e voiceExec) join(ctx context.Context, u store.User, parsed linxchat.Utter
 			e.gate.Clear(u.DeviceID)
 			return fail(linxchat.IntentJoinChannel, "口令不正确")
 		}
-		if !e.gate.Offer(u.DeviceID, "join:"+parsed.Code, now) {
-			return voiceResult{Intent: linxchat.IntentJoinChannel, Answer: linxchat.ConfirmJoinPrompt(parsed.Code)}
-		}
-		return e.joinNow(ctx, u.ID, parsed.Code, "")
+		e.gate.Offer(u.DeviceID, "join:"+parsed.Code, now)
+		return voiceResult{Intent: linxchat.IntentJoinChannel, Answer: linxchat.ConfirmJoinPrompt(parsed.Code)}
 	}
 	e.gate.Clear(u.DeviceID)
 	if parsed.Name == "" {

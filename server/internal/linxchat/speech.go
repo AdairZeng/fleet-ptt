@@ -25,9 +25,9 @@ func CreatedAnswer(name, code string) string {
 	return "已创建" + name + "。" + SpeakCode(code)
 }
 
-// ConfirmJoinPrompt 请司机把刚听到的口令再说一遍。第一句口令不会进房。
+// ConfirmJoinPrompt 复述口令并要求明确确认，重复回调不能触发入群。
 func ConfirmJoinPrompt(code string) string {
-	return "请再说一次口令确认。" + SpeakCode(code)
+	return SpeakCode(code) + "。请说确认加入或取消"
 }
 
 // ListAnswer 念出已加入的频道。current 为空表示没有当前频道。

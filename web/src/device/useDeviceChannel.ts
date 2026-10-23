@@ -223,7 +223,9 @@ export function useDeviceChannel({
         finishCommand()
         await voiceStartRef.current(signal)
       } else if (action.action === 'set_volume') {
-        const value = Number(action.value)
+        const value = action.value === '+10' || action.value === '-10'
+          ? Math.min(100, Math.max(0, Math.round(volume * 100) + Number(action.value)))
+          : Number(action.value)
         if (!action.value || !Number.isFinite(value) || value < 0 || value > 100) throw new Error('音量无效')
         volumeControl.current(value / 100)
         setVolume(value / 100)

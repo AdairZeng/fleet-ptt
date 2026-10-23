@@ -15,10 +15,10 @@
 
 ```bash
 cp .env.example .env
-docker compose up --build
+make up
 ```
 
-浏览器打开 <http://localhost:8080>。`GET /healthz` 返回 `OK`。数据目录 `data/` 挂载到容器 `/data`（已 gitignore）。
+`make up`（等同 `make start`）会执行 `docker compose up --build`。浏览器打开 <http://localhost:8080>。另开终端执行 `make health`，应输出 `OK`。停止并移除容器：`make down`。数据目录 `data/` 挂载到容器 `/data`（已 gitignore）。
 
 开发时前后端分开跑（在仓库根目录）：
 

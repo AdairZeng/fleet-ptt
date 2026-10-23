@@ -92,7 +92,7 @@ func (c *client) writeLoop() {
 	}
 }
 
-// ServeHTTP 升级 GET /api/v1/ws。
+// ServeHTTP 升级 GET /api/v1/device/ws。
 // 浏览器不能自定义握手头，所以除 Bearer 外也接受 ?token=。
 // 凭证是 session_token，不靠 cookie，因此不校验 Origin（开发时 Vite 与 API 不同源）。
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {

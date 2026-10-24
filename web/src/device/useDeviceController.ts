@@ -56,7 +56,7 @@ export function useDeviceController() {
 
   useEffect(() => {
     if (!device.powered) { feedback.close(); return }
-    if (device.sound === 'none') return
+    if (device.sound === 'none' || device.sound === 'boot') return
     void feedback.play(device.sound).catch((error: unknown) => {
       if (error instanceof Error && error.name !== 'AbortError') setSoundError(error.message)
     })
@@ -83,8 +83,14 @@ export function useDeviceController() {
   useEffect(() => {
     if (device.phase !== 'booting') return
     let cancelled = false
+    const abort = new AbortController()
     async function boot() {
       try {
+        await feedback.welcome(abort.signal).catch((error: unknown) => {
+          if (abort.signal.aborted) throw error
+          setSoundError(error instanceof Error ? error.message : '欢迎语播放失败')
+        })
+        if (cancelled) return
         const credential = loadDeviceCredential() ?? await registerDevice(session?.session_token)
         // A confirmed nickname may have been saved before a page close or a
         // failed boot response. Recover the identity using device proof.
@@ -112,12 +118,12 @@ export function useDeviceController() {
         }
       } catch (error) {
         if (!cancelled) dispatchDevice({ type: 'FAIL' })
-        setSoundError(error instanceof Error ? error.message : '设备启动失败')
+        if (!cancelled) setSoundError(error instanceof Error ? error.message : '设备启动失败')
       }
     }
     void boot()
-    return () => { cancelled = true }
-  }, [device.phase, session])
+    return () => { cancelled = true; abort.abort() }
+  }, [device.phase, session, feedback])
 
   const onDeviceAction = (action: DeviceAction) => {
     if (action === 'power') {

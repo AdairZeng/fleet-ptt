@@ -39,13 +39,13 @@ export function Invitations({ session, channelName, subscribe, stopUplink }: {
     finally { setBusy(false); setRevision(value => value + 1) }
   }
   return <section aria-label="在线成员与邀请" id="invitations">
-    <h2>邀请</h2>
     {invitations.filter(item => item.recipient_id === session.user_id && item.status === 'pending').map(item => <div key={item.id}>
       <p>{item.sender_name}邀请你加入「{item.channel_name}」</p>
       <button disabled={busy} onClick={() => void run(async () => { await stopUplink(); await respondInvitation(session, item.id, true) }, '已接受邀请')}>接受</button>
       <button disabled={busy} onClick={() => void run(() => respondInvitation(session, item.id, false), '已拒绝邀请')}>拒绝</button>
     </div>)}
-    <h2>在线成员</h2>
+    <details className="screen-menu">
+    <summary>联系人与邀请 <span>查看在线成员</span></summary>
     <p className="hint">可邀请其他频道的在线成员。在线不代表正在收听你的频道。</p>
     <button disabled={busy} onClick={() => setRevision(value => value + 1)}>刷新在线成员</button>
     <label>邀请到频道<input value={name} onChange={event => setName(event.target.value)} placeholder="例如：装货" maxLength={32} /></label>
@@ -53,6 +53,7 @@ export function Invitations({ session, channelName, subscribe, stopUplink }: {
       {member.display_name} <small>（{member.user_id.slice(0, 8)}）</small>
       <button disabled={busy || !name.trim()} onClick={() => void run(async () => { await stopUplink(); await inviteMember(session, member.user_id, name.trim()) }, '邀请已送达，等待对方接受')}>邀请</button>
     </li>)}</ul>}
+    </details>
     {notice ? <p role="status">{notice}</p> : null}
   </section>
 }

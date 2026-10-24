@@ -852,3 +852,29 @@ main > .error {
 .device-screen .join-code { color: #9de6f5; border-color: #376579; font-size: 20px; }
 .device-screen main { font-size: 12px; }
 .device-screen h1 { font-size: 20px; }
+
+.device-screen .assistant-card { padding: 9px 10px; margin: 8px 0; border: 1px solid #2d5365; border-radius: 9px; background: #102532; }
+.device-screen .assistant-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; color: #a5e9fa; }
+.device-screen .assistant-heading span { font-size: 9px; color: #8aaebe; }
+.device-screen .assistant-card p { font-size: 11px; overflow-wrap: anywhere; }
+.device-screen .assistant-card > p { max-height: 66px; overflow: auto; }
+.device-screen .assistant-card details { margin-top: 5px; font-size: 10px; color: #88a9ba; }
+.device-screen .screen-menu { border-top: 1px solid #294854; margin-top: 9px; padding: 7px 0; font-size: 11px; }
+.device-screen .screen-menu > summary { min-height: 30px; padding: 3px 0; line-height: 24px; color: #bbdce9; font-weight: 600; }
+.device-screen .screen-menu > summary span { display: block; padding-left: 14px; color: #7598ab; font-size: 9px; line-height: 15px; font-weight: 400; }
+.device-screen .command-guide { border: 1px solid #305365; padding: 5px 9px; border-radius: 8px; }
+.device-screen .command-guide > summary span { display: inline; padding-left: 6px; }
+.device-screen .command-guide dl { margin: 7px 0; }
+.device-screen .command-guide dl div { margin: 0 0 9px; }
+.device-screen .command-guide dt { color: #9bddf2; font-size: 12px; }
+.device-screen .command-guide dd { margin: 2px 0 0; font-size: 10px; color: #8faaba; }
+.device-screen .command-guide > p { margin: 6px 0; font-size: 11px; }
+.device-screen .roster-heading { font-size: 10px; color: #7f9fb0; }
+.device-screen .roster { gap: 5px; max-height: 110px; overflow: auto; }
+.device-screen .roster-row { padding: 5px 7px; }
+.device-screen .talk-stage { padding: 11px 8px; }
+.device-screen .talk-glance { font-size: 26px; }
+.device-screen .talk-detail { font-size: 10px; }
+.device-screen .touch-controls .talk-dock { margin-top: 0; border-top: 0; }
+.device-screen #invitations { margin-top: 0; }
+.device-screen #invitations > div { background: #133c46; padding: 9px; border: 1px solid #4f91a3; border-radius: 8px; }

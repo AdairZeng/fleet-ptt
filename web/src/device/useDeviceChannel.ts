@@ -86,6 +86,7 @@ export function useDeviceChannel({
   const [switchError, setSwitchError] = useState('')
   const [switchNotice, setSwitchNotice] = useState('')
   const [voiceNotice, setVoiceNotice] = useState('')
+  const [wakeMissed, setWakeMissed] = useState('')
   const [commanding, setCommanding] = useState(false)
   const [arming, setArming] = useState(false)
   const [voiceReady, setVoiceReady] = useState(false)
@@ -241,7 +242,7 @@ export function useDeviceChannel({
           setVoiceNotice(`听到：${event.text}`)
         }
         if (event.type === 'wake_missed' && event.text) {
-          setVoiceNotice(`识别到“${event.text}”，未匹配唤醒词，请说“你好小路”或按指令键`)
+          setWakeMissed(event.text)
         }
         if (event.type === 'wake' && event.state === 'standby') {
           commandGeneration.current += 1
@@ -313,6 +314,8 @@ export function useDeviceChannel({
         if (!inviteRef.current || action.channel_id !== channel?.channel_id) throw new Error('当前频道二维码未就绪')
         const qr = inviteRef.current.querySelector('img')
         if (!qr?.complete || qr.naturalWidth === 0) throw new Error('二维码尚未生成')
+        const menu = inviteRef.current.closest('details')
+        if (menu) menu.open = true
         inviteRef.current.scrollIntoView({ block: 'center' })
       } else if (action.action === 'set_nickname') {
         const profile = await fetchMe(session)
@@ -570,6 +573,7 @@ export function useDeviceChannel({
     switchError,
     switchNotice,
     voiceNotice,
+    wakeMissed,
     room,
     volumeControl,
     volume: ducking ? volume * 0.2 : volume,

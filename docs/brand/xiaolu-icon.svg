@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">小路 · 语音对讲</title>
+  <desc id="desc">深色圆角底上的银色对讲终端，青色道路与声波组成中心标识。</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#263B43"/><stop offset="1" stop-color="#0C171E"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2=".85" y2="1">
+      <stop stop-color="#F3F1E9"/><stop offset=".5" stop-color="#D0D1CA"/><stop offset="1" stop-color="#9CA9A9"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#20383E"/><stop offset="1" stop-color="#101E26"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#background)"/>
+  <rect x="264" y="164" width="496" height="704" rx="130" fill="#020B10" opacity=".24"/>
+  <rect x="264" y="148" width="496" height="704" rx="130" fill="url(#metal)"/>
+  <rect x="286" y="170" width="452" height="544" rx="110" fill="url(#glass)"/>
+  <path d="M478 216h68" stroke="#9AABAB" stroke-width="10" stroke-linecap="round" opacity=".6"/>
+  <g fill="none" stroke="#A5E6DE" stroke-linecap="round">
+    <path d="M423 586 480 344M601 586 544 344" stroke-width="29"/>
+    <path d="M512 388v32m0 54v48m0 55v18" stroke-width="16"/>
+    <path d="M372 422v76M652 422v76" stroke-width="24"/>
+    <path d="M330 444v32M694 444v32" stroke-width="16" opacity=".65"/>
+  </g>
+  <rect x="472" y="744" width="80" height="80" rx="40" fill="#1F353C"/>
+  <g stroke="#B6E4DF" stroke-width="7" stroke-linecap="round">
+    <path d="M496 778v12m16-24v36m16-24v12"/>
+  </g>
+  <circle cx="380" cy="784" r="14" fill="#6C8084"/>
+  <circle cx="644" cy="784" r="14" fill="#6C8084"/>
+</svg>

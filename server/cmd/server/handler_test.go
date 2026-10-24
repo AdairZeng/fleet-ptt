@@ -19,7 +19,7 @@ import (
 
 func TestHealthz(t *testing.T) {
 	users, channels := testDeps(t)
-	h := newHandler(filepath.Join(t.TempDir(), "missing"), users, channels, rtn.Signer{}, "")
+	h := newHandler(filepath.Join(t.TempDir(), "missing"), users, channels, rtn.Signer{}, "", "")
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -53,7 +53,7 @@ func TestStaticSite(t *testing.T) {
 	}
 
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{}, "")
+	h := newHandler(dir, users, channels, rtn.Signer{}, "", "")
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
@@ -86,7 +86,7 @@ func TestSessionNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{}, "")
+	h := newHandler(dir, users, channels, rtn.Signer{}, "", "")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "老王", "device-1")))
@@ -105,7 +105,7 @@ func TestChannelNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{}, "")
+	h := newHandler(dir, users, channels, rtn.Signer{}, "", "")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "队长", "device-1")))
@@ -142,7 +142,7 @@ func TestRoomTokenNotShadowedByStatic(t *testing.T) {
 		AccessKey: "test-ak",
 		SecretKey: "test-sk-should-not-leak",
 		AppID:     "test-app",
-	}, "")
+	}, "", "")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "队长", "device-1")))
@@ -190,7 +190,7 @@ func TestSignalingNotShadowedByStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{}, "")
+	h := newHandler(dir, users, channels, rtn.Signer{}, "", "")
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/device/ws", nil))
@@ -205,32 +205,23 @@ func TestSignalingNotShadowedByStatic(t *testing.T) {
 	}
 }
 
-func TestLinxChatNotShadowedByStatic(t *testing.T) {
+func TestMCPNotShadowedByStatic(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	users, channels := testDeps(t)
-	h := newHandler(dir, users, channels, rtn.Signer{}, "linx-test-token")
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(deviceSessionBody(t, users, "老王", "device-linx")))
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("session %d %s", rec.Code, rec.Body)
-	}
-
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/linx/chat", strings.NewReader(`{"auth":{"device_id":"device-linx"},"type":"chat","details":{"msg":"你好","session_id":"s-1"}}`))
-	req.Header.Set("Authorization", "Bearer linx-test-token")
-	req.Header.Set("Accept", "text/event-stream")
-	h.ServeHTTP(rec, req)
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK || strings.Contains(body, "home") || !strings.Contains(body, `"answer"`) || !strings.Contains(body, `"session_id":"s-1"`) {
-		t.Fatalf("linx status %d body %s", rec.Code, body)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream; charset=utf-8" {
-		t.Fatalf("content-type %q", ct)
+	h := newHandler(dir, users, channels, rtn.Signer{}, "linx-test-token", "test-agent")
+	for _, path := range []string{"/api/v1/mcp", "/api/v1/mcp/message"} {
+		method := http.MethodGet
+		if strings.HasSuffix(path, "message") {
+			method = http.MethodPost
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "home") {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body)
+		}
 	}
 }
 

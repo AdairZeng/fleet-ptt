@@ -10,7 +10,7 @@
 | 客户端 | React + Vite + Three.js 3D 设备原型 |
 | 服务端 | Go HTTP API、WebSocket 设备信令、静态资源托管 |
 | 对讲媒体 | 七牛实时音视频云 RTN，音频为主 |
-| 指令能力 | 灵矽 ASR/TTS + Chat SSE 业务意图 |
+| 指令能力 | 灵矽 ASR/智能体/TTS + 云端 MCP 业务工具 |
 | 存储 | SQLite，保存用户、设备、频道、成员和会话状态 |
 | 部署 | Docker Compose，`make up` 一键启动 |
 | 最终硬件 | 继承按键语义、屏幕状态、业务协议和音频路由 |
@@ -33,9 +33,9 @@ flowchart TB
   audio <--> rtc[七牛RTN]
   audio --> wake[灵矽云端监听]
   audio <--> bridge[指令接入服务]
-  bridge <--> linx[灵矽ASR与TTS]
-  linx --> chat[Chat SSE]
-  chat --> api
+  bridge <--> linx[灵矽ASR与智能体及TTS]
+  linx <-->|结构化工具调用与结果| mcp[云端MCP]
+  mcp --> api
   api --> db[(SQLite)]
 ```
 
@@ -47,7 +47,7 @@ flowchart TB
 | 音频控制层 | 唤醒、指令采集、TTS、RTN 收听/发布、音量和资源释放 |
 | Go 业务层 | 用户、设备、频道、成员、口令、权限和动作执行 |
 | 设备信令 | 定向设备动作、执行回执、成员广播和连接状态 |
-| 灵矽接入 | 上游音频、ASR/TTS、意图文本和 Chat SSE |
+| 灵矽接入 | 上游音频、ASR/TTS、智能体语义理解和云端 MCP 工具调用 |
 | SQLite | 轻量持久化和单实例运行数据 |
 
 3D 点击、语音和屏幕兜底都只调用设备控制动作，不直接访问 HTTP 或 SDK。业务层与音频层通过明确的请求、成功、失败和取消结果通信。
@@ -177,13 +177,13 @@ sequenceDiagram
 | 数据 | 作用 |
 |------|------|
 | users | 用户 ID、昵称、创建时间 |
-| devices | 应用设备 ID、灵矽设备 ID、绑定状态、最后连接时间 |
+| devices | 应用设备 ID、mac_id、设备凭证摘要、用户归属 |
 | channels | 频道 ID、名称、口令、创建者、创建时间 |
 | memberships | 用户、频道、角色 |
 | device_session | 当前频道、发送状态、上一频道、活动动作 |
-| command_context | 设备级待确认动作、参数、过期时间、动作 ID |
+| command_context | 设备与灵矽会话内的待确认动作、参数、过期时间、动作 ID |
 
-同一设备只允许一个当前频道和一个上行状态；成员事件广播给频道成员，设备动作定向到目标设备。绑定流程先验证设备归属，再建立用户会话。首次语音设置只允许初始化昵称和绑定，不开放未鉴权的通用音频代理。所有动作使用唯一动作 ID，处理重复回调、取消和迟到结果。
+同一设备只允许一个当前频道和一个上行状态；成员事件广播给频道成员，设备动作定向到目标设备。绑定流程先验证设备归属，再建立用户会话。首次语音设置只允许初始化昵称和绑定，不开放未鉴权的通用音频代理。设备动作使用唯一 action_id，处理重复动作、取消和迟到结果；MCP 请求使用独立 JSON-RPC ID。
 
 ## 8. 服务接口
 
@@ -199,10 +199,10 @@ sequenceDiagram
 | POST | `/api/v1/channels/join` | 按口令或名称入群 |
 | POST | `/api/v1/channels/current` | 切换当前频道 |
 | GET | `/api/v1/channels/{id}/rtn-token` | 为成员签发 RoomToken |
-| POST | `/api/v1/actions/{id}/result` | 上报设备动作结果 |
 | POST | `/api/v1/talk/start` | 请求开始上行 |
 | POST | `/api/v1/talk/end` | 请求结束上行 |
-| POST | `/api/v1/linx/chat` | 接收灵矽 Chat SSE 意图 |
+| GET | `/api/v1/mcp` | 灵矽云端 MCP SSE 连接 |
+| POST | `/api/v1/mcp/message` | MCP JSON-RPC 消息；使用 SSE 返回的 session_id |
 | POST | `/api/v1/device/boot` | 设备开机认证并按 mac_id 检查/完成灵矽绑定 |
 | GET | `/api/v1/linx/ws` | 设备到真实灵矽设备 WebSocket 的服务端桥接 |
 
@@ -210,9 +210,9 @@ sequenceDiagram
 
 浏览器通过 `POST /api/v1/device/register` 获取服务端生成的 `device_id`、虚拟 `mac_id` 和 256 位随机设备凭证，保存在本机；真实硬件在预配阶段写入同样的三项字段。数据库只保存凭证 SHA-256 摘要。设备仅可凭该凭证向 `POST /api/v1/device/session` 提交昵称，绑定成功才签发业务会话；恢复时允许省略昵称，改昵称沿用相同用户 ID。设备 ID 本身没有认证能力，`/api/v1/session` 也要求设备凭证。
 
-浏览器和硬件都从当前版本的设备注册/预配流程开始，不读取旧设备表字段。丢失设备凭证且没有有效会话时，不允许仅凭设备 ID 认领身份。当前原型保持用户与设备一对一，当前频道/上行状态沿用该用户的唯一会话记录。
+浏览器和硬件都从设备注册/预配流程开始。丢失设备凭证且没有有效会话时，不允许仅凭设备 ID 认领身份。当前原型保持用户与设备一对一，当前频道/上行状态沿用该用户的唯一会话记录。
 
-灵矽侧使用设备的 `mac_id`。浏览器注册接口可以为模拟设备生成 `mac_id`，真实硬件在预配时写入同一字段；回调通过 `mac_id` 查询应用设备，不以应用 `device_id` 代替它。
+灵矽侧使用设备的 `mac_id`。浏览器注册接口可以为模拟设备生成 `mac_id`，真实硬件在预配时写入同一字段；MCP 使用平台提供的 `X-Linx-Device-Id`（即 `mac_id`）查询应用设备，不以应用 `device_id` 代替它。
 
 ### 8.2 设备 WebSocket
 
@@ -241,25 +241,29 @@ sequenceDiagram
 
 `success` 必须为显式布尔值，失败信息使用 `message`。支持 `talk_start`、`talk_end`、`switch_channel`、`set_volume`、`show_join_qr`、`set_nickname`；`set_volume` 和 `set_nickname`通过字符串 `value` 传参，音量范围 0–100；`+10` / `-10` 表示相对当前设备音量增减 10 个百分点并限制在该范围内。每个设备最多一个待执行动作，服务端 15 秒超时后发送 `action_cancel`。客户端以 `action_id` 复用回执，不重复执行；断线取消本地待执行动作，重连只恢复频道和成员状态。
 
-成员讲话状态只广播给同频道成员；设备动作只发送给目标设备。服务端不以 SSE 写入成功代替设备动作成功。
+成员讲话状态只广播给同频道成员；设备动作只发送给目标设备。服务端不以 MCP 响应发送成功代替设备动作成功。
 
-### 8.3 灵矽 Chat SSE
+### 8.3 灵矽云端 MCP
 
-灵矽向 `/api/v1/linx/chat` 发送 `auth.device_id`、`details.msg` 和 `details.session_id`，请求头为 `Authorization: Bearer <LINX_CHAT_TOKEN>`。服务端验证设备映射、解析意图、检查权限并执行动作，返回一条 `message` 和一条 `message_end`；`details.answer` 用于 TTS，`details.intent` 表示动作类型，`session_id` 原样回传。
+灵矽智能体负责语义理解和工具选择；Go 只接收结构化业务调用，执行身份校验、参数校验、权限判断、确认和设备动作。传输使用 JSON-RPC 2.0 与 SSE：`GET /api/v1/mcp` 建立连接并返回 `endpoint` 事件，灵矽向该事件提供的 `/api/v1/mcp/message?session_id=...` 提交请求，响应通过 SSE `message` 事件返回。支持 `initialize`、初始化通知、`ping`、`tools/list` 和 `tools/call`。
 
-意图包括 `create_channel`、`join_channel`、`confirm_join`、`cancel_join`、`switch_channel`、`previous_channel`、`talk_start`、`talk_end`、`list_my_channels`、`list_speakers`、`show_join_code`、`show_join_qr`、`set_volume` 和 `set_nickname`。业务失败也返回可播报的 `answer`，设备动作以 WebSocket 回执确认。
+所有请求携带 `Authorization: Bearer <LINX_MCP_TOKEN>`。设备调用由灵矽平台附加 `X-Linx-Device-Id`、`X-Linx-Agent-Id` 和 `X-Linx-Session-Id`；设备标识是注册记录中的 `mac_id`，智能体 ID 必须与 `LINX_AGENT_ID` 一致。控制台无设备上下文时可初始化及读取工具目录，不能执行业务工具。设备身份不接受模型参数覆盖。
+
+工具包括 `create_channel`、`join_channel`、`confirm_action`、`cancel_action`、`switch_channel`、`previous_channel`、`talk_start`、`talk_end`、`list_my_channels`、`list_speakers`、`show_join_code`、`show_join_qr`、`set_volume` 和 `set_nickname`。参数以 `tools/list` 的 JSON Schema 为准，完整表见 [灵矽接入方案](./linx-access.md)。结果使用 MCP `content` 文本及 `isError`，灵矽按实际结果播报；需要设备执行的操作沿 `/api/v1/device/ws` 下发并等待回执。
+
+口令入群与昵称修改先生成设备与灵矽会话内的待确认事项，`confirm_action` 消费有效待办，`cancel_action` 清除待办；有效期为两分钟，缺失或过期不得执行；同设备的另一灵矽会话不能确认该待办。同一 SSE 连接内使用 JSON-RPC 请求 ID 识别重试；传输 session_id、灵矽对话 session ID 和设备 action_id 各自独立。跨连接的业务去重需要进一步定义稳定请求标识，当前不承诺持久幂等。
 
 ### 8.4 灵矽音频接入
 
 3D 原型和真实硬件都通过 `/api/v1/linx/ws` 连接项目服务端，服务端根据当前设备的 `mac_id` 获取对应灵矽 WebSocket 凭证。服务端向灵矽发送 PCM `hello`，转发设备的 `listen start/stop` 与 16 kHz 单声道 16 bit 小端 PCM 二进制帧，并将灵矽的 STT、TTS 状态和音频帧转发给设备。客户端不能设置灵矽要求的握手头，也不接触灵矽长期凭证。
 
-灵矽 Chat 模式仍会从云端向 `/api/v1/linx/chat` 发起 HTTP POST + SSE 请求；本地联调必须通过公网隧道暴露该路径。业务服务返回的 `message` 由灵矽合成 TTS，音频沿原 WebSocket 返回设备。当前桥接不把灵矽 Token 写入数据库或浏览器存储。
+灵矽智能体通过云端 MCP 执行业务工具，并根据工具结果生成回答、合成 TTS；音频沿设备 WebSocket 返回。云端 MCP 需要可从公网访问的 SSE 与消息接口，本地联调使用公网隧道。音频桥接使用服务端保存的设备 Token，不向客户端开放灵矽凭证，不启用设备端 MCP 工具发现。
 
 ## 9. 安全、部署与运行约束
 
-- `SESSION_SECRET`、七牛 AK/SK、RTN AppID、`LINX_CHAT_TOKEN`、灵矽 API Key 和 Agent ID 只放本地 `.env` 或部署环境。
+- `SESSION_SECRET`、七牛 AK/SK、RTN AppID、`LINX_MCP_TOKEN`、灵矽 API Key 和 Agent ID 只放本地 `.env` 或部署环境。
 - RoomToken 由 Go 短时签发，浏览器不接触七牛 SecretKey。
-- 灵矽回调校验 Bearer token、设备映射、请求类型、会话 ID 和动作权限。
+- 云端 MCP 校验 Bearer token、平台设备/智能体/会话身份、结构化参数和动作权限；模型参数不能指定身份。
 - WebSocket 仅接受有效设备会话，动作按设备定向；频道成员事件按成员关系发送。
 - SQLite 使用单实例 volume，数据需要备份；多实例部署需另行提供共享存储和连接协调。
 - 公网使用 HTTPS，反向代理支持 WebSocket 升级和 SSE 不缓冲；`localhost` 可用于浏览器麦克风开发。
@@ -269,12 +273,12 @@ sequenceDiagram
 
 1. 设备控制层、三按键灰模、屏幕状态和资源生命周期。
 2. 频道、成员、RTN 收听与 PTT 对讲闭环。
-3. 灵矽音频桥接、Chat 意图、动作 ID、回执、确认与取消。
+3. 灵矽音频桥接、云端 MCP 工具、动作 ID、回执、确认与取消。
 4. 灵矽云端唤醒、连续说法、对讲中打断和回声处理。
 5. 正式模型、材质、灯光、二维码和移动端体验。
 6. 目标硬件平台的 RTN、灵矽、唤醒、声学、弱网和续航评估。
 
-验收要求：首次授权后，用户只通过小路语音完成昵称设置、建群、确认入群、切群/回切、开始/结束对讲、音量和邀请查询；三个按键随时可以中止或兜底。验证覆盖无效口令、确认过期、歧义追问、识别失败、媒体失败、快速松开、迟到回调、重复动作、设备断线、关机释放和真实双端音频。
+验收要求：首次授权后，用户只通过小路语音完成昵称设置、建群、确认入群、切群/回切、开始/结束对讲、音量和邀请查询；三个按键随时可以中止或兜底。验证覆盖无效口令、确认过期、歧义追问、识别失败、媒体失败、快速松开、迟到回执、重复动作、设备断线、关机释放和真实双端音频。
 
 ## 11. 配置与开发命令
 
@@ -285,8 +289,8 @@ sequenceDiagram
 | `SQLITE_PATH` | SQLite 文件路径 |
 | `SESSION_SECRET` | 设备/用户会话签名 |
 | `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_RTN_APP_ID` | 七牛 RTN 凭证 |
-| `LINX_CHAT_TOKEN` | 灵矽 Chat 回调校验 |
-| `LINX_API_KEY` / `LINX_AGENT_ID` | 灵矽官方设备 API 认证和智能体 ID；设备开机时检查并自动绑定当前 `mac_id` |
+| `LINX_MCP_TOKEN` | 灵矽云端 MCP 鉴权，配置到自定义 MCP 请求头 |
+| `LINX_API_KEY` / `LINX_AGENT_ID` | 灵矽官方设备 API 认证和智能体 ID；开机绑定当前 `mac_id`，MCP 同时校验智能体 ID |
 | `mac_id` | 每台设备的硬件 MAC；模拟设备由服务端生成，真实硬件由工厂预配，用于 OTA、设备绑定和 WebSocket 握手 |
 | `LINX_API_BASE_URL` / `LINX_OTA_URL` | 灵矽设备 API 和 OTA 地址，默认使用官方地址 |
 | `PUBLIC_BASE_URL` | 灵矽访问本服务的公网基址 |

@@ -16,9 +16,10 @@ import (
 )
 
 type voiceExec struct {
-	channels *channel.Service
-	hub      *ws.Hub
-	gate     *linxchat.JoinGate
+	channels  *channel.Service
+	hub       *ws.Hub
+	gate      *linxchat.JoinGate
+	sessionID string
 }
 
 type voiceResult struct {
@@ -27,22 +28,10 @@ type voiceResult struct {
 	Failed bool
 }
 
-func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.Time) linxchat.Result {
-	parsed := linxchat.Parse(msg)
-	if pending, ok := e.gate.Pending(u.DeviceID, now); ok && parsed.Intent == linxchat.IntentEcho {
-		prefixes := map[string]string{
-			"ask:join": "加入", "ask:switch": "切到",
-			"ask:nickname": "我叫", "ask:volume": "音量调到",
-		}
-		if pending == "ask:create" {
-			parsed = linxchat.Utterance{Intent: linxchat.IntentCreateChannel, Name: parsed.Text, Text: parsed.Text}
-		} else if prefix, ok := prefixes[pending]; ok {
-			parsed = linxchat.Parse(prefix + parsed.Text)
-		}
-	}
+func (e voiceExec) run(ctx context.Context, u store.User, parsed linxchat.Utterance, now time.Time) voiceResult {
 	wasTalking, talkErr := e.stopUplink(ctx, u.ID, parsed.Intent)
 	if talkErr != nil && !errors.Is(talkErr, channel.ErrNoCurrent) {
-		return linxchat.Result{Intent: parsed.Intent, Answer: "停止发送失败，操作未执行"}
+		return fail(parsed.Intent, "停止发送失败，操作未执行")
 	}
 	if parsed.Intent != linxchat.IntentSetNickname && parsed.Intent != linxchat.IntentJoinChannel &&
 		parsed.Intent != linxchat.IntentConfirmJoin && parsed.Intent != linxchat.IntentCancelJoin {
@@ -68,12 +57,10 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	case linxchat.IntentSetNickname:
 		if !user.ValidNickname(parsed.Name) {
 			e.gate.Clear(u.DeviceID)
-			e.gate.Offer(u.DeviceID, "ask:nickname", now)
 			out = fail(parsed.Intent, "请说 1 到 32 字的昵称")
 			break
 		}
-		e.gate.Clear(u.DeviceID)
-		e.gate.Offer(u.DeviceID, "nickname:"+parsed.Name, now)
+		e.offerPending(u.DeviceID, "nickname:"+parsed.Name, now)
 		out = voiceResult{Intent: parsed.Intent, Answer: "以后叫你" + parsed.Name + "，请说确认或取消"}
 	case linxchat.IntentSetVolume:
 		if parsed.Name == "+10" || parsed.Name == "-10" {
@@ -88,9 +75,8 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 			out = voiceResult{Intent: parsed.Intent, Answer: answer}
 			break
 		}
-		volume, ok := linxchat.ParseVolume(parsed.Name)
-		if !ok {
-			e.gate.Offer(u.DeviceID, "ask:volume", now)
+		volume, err := strconv.Atoi(parsed.Name)
+		if err != nil || volume < 0 || volume > 100 {
 			out = fail(parsed.Intent, "请说音量调到 0 到 100 的数字")
 			break
 		}
@@ -102,9 +88,6 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	case linxchat.IntentListSpeakers, linxchat.IntentShowJoinCode, linxchat.IntentShowJoinQR:
 		out = e.channelInformation(ctx, u, parsed.Intent)
 	case linxchat.IntentCreateChannel:
-		if parsed.Name == "" {
-			e.gate.Offer(u.DeviceID, "ask:create", now)
-		}
 		out = e.create(ctx, u.ID, parsed.Name, now)
 	case linxchat.IntentJoinChannel:
 		out = e.join(ctx, u, parsed, now)
@@ -113,9 +96,6 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	case linxchat.IntentCancelJoin:
 		out = e.cancelJoin(u.DeviceID, now)
 	case linxchat.IntentSwitchChannel:
-		if parsed.Name == "" && parsed.Index == 0 {
-			e.gate.Offer(u.DeviceID, "ask:switch", now)
-		}
 		out = e.switchChannel(ctx, u.ID, parsed)
 	case linxchat.IntentTalkStart:
 		out = e.talkStart(ctx, u.ID, u.DeviceID)
@@ -124,10 +104,10 @@ func (e voiceExec) run(ctx context.Context, u store.User, msg string, now time.T
 	case linxchat.IntentListChannels:
 		out = e.list(ctx, u.ID)
 	default:
-		out = fail(linxchat.IntentEcho, "没有识别到操作。可以说创建装货频道、加入口令、切到装货、开始对讲或结束对讲")
+		out = fail(parsed.Intent, "不支持的业务操作")
 	}
 	e.hub.PushText(u.ID, voiceKind(out.Failed), out.Answer)
-	return linxchat.Result{Intent: out.Intent, Answer: out.Answer}
+	return out
 }
 
 // stopUplink 在执行建群、入群、切群、列举和结束之外的对讲指令前先停上行。
@@ -175,21 +155,39 @@ func (e voiceExec) join(ctx context.Context, u store.User, parsed linxchat.Utter
 			e.gate.Clear(u.DeviceID)
 			return fail(linxchat.IntentJoinChannel, "口令不正确")
 		}
-		e.gate.Offer(u.DeviceID, "join:"+parsed.Code, now)
+		e.offerPending(u.DeviceID, "join:"+parsed.Code, now)
 		return voiceResult{Intent: linxchat.IntentJoinChannel, Answer: linxchat.ConfirmJoinPrompt(parsed.Code)}
 	}
 	e.gate.Clear(u.DeviceID)
 	if parsed.Name == "" {
-		e.gate.Offer(u.DeviceID, "ask:join", now)
 		return voiceResult{Intent: linxchat.IntentJoinChannel, Answer: "没听清口令。请说加入口令，再逐位说 6 位口令"}
 	}
 	return e.joinNow(ctx, u.ID, "", parsed.Name)
 }
 
-func (e voiceExec) confirmJoin(ctx context.Context, u store.User, now time.Time) voiceResult {
-	pending, ok := e.gate.Confirm(u.DeviceID, now)
+// Pending actions belong to both the physical device and its Linx conversation.
+// A second conversation cannot confirm or consume another conversation's action.
+func (e voiceExec) offerPending(deviceID, action string, now time.Time) {
+	e.gate.Offer(deviceID, e.sessionID+"\x00"+action, now)
+}
+
+func (e voiceExec) confirmPending(deviceID string, now time.Time) (string, bool) {
+	pending, ok := e.gate.Pending(deviceID, now)
 	if !ok {
-		return voiceResult{Intent: linxchat.IntentConfirmJoin, Answer: "没有有效的待确认操作，请重新说出指令"}
+		return "", false
+	}
+	action, ok := strings.CutPrefix(pending, e.sessionID+"\x00")
+	if !ok {
+		return "", false
+	}
+	e.gate.Clear(deviceID)
+	return action, true
+}
+
+func (e voiceExec) confirmJoin(ctx context.Context, u store.User, now time.Time) voiceResult {
+	pending, ok := e.confirmPending(u.DeviceID, now)
+	if !ok {
+		return fail(linxchat.IntentConfirmJoin, "没有本次会话的有效待确认操作，请重新说出指令")
 	}
 	if nickname, ok := strings.CutPrefix(pending, "nickname:"); ok {
 		return e.rename(ctx, u, nickname)
@@ -206,14 +204,11 @@ func (e voiceExec) confirmJoin(ctx context.Context, u store.User, now time.Time)
 }
 
 func (e voiceExec) cancelJoin(deviceID string, now time.Time) voiceResult {
-	pending, ok := e.gate.Confirm(deviceID, now)
+	pending, ok := e.confirmPending(deviceID, now)
 	if !ok {
 		return voiceResult{Intent: linxchat.IntentCancelJoin, Answer: "没有有效的待确认操作"}
 	}
 	answer := "已取消加入"
-	if strings.HasPrefix(pending, "ask:") {
-		answer = "已取消操作"
-	}
 	if strings.HasPrefix(pending, "nickname:") {
 		answer = "已取消修改昵称"
 	}

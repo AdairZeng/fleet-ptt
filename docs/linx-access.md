@@ -1,135 +1,129 @@
 # 灵矽接入方案：小路语音对讲机
 
-本文件定义小路 3D 原型和未来硬件的灵矽接入方式。依据灵矽公开文档：[第三方应用接入](https://linx.qiniu.com/docs/xrobot/guide/third-app)、[WebSocket 协议](https://linx.qiniu.com/docs/xrobot/platform/websocket)、[OTA](https://linx.qiniu.com/docs/xrobot/platform/OTA)。本仓库不保存灵矽密钥；设备注册、握手和音频格式必须在授权环境中实测。
+本文件定义 3D 模拟设备和真实硬件的统一灵矽接入方式。依据官方 [云端 MCP](https://linx.qiniu.com/docs/xrobot/mcp/software-mcp)、[MCP 服务管理](https://linx.qiniu.com/docs/xrobot/guide/mcp-store)、[WebSocket 协议](https://linx.qiniu.com/docs/xrobot/platform/websocket) 和 [OTA](https://linx.qiniu.com/docs/xrobot/platform/OTA) 文档。真实密钥只保存在本地或部署环境。
 
-## 1. 产品链路
+## 1. 职责与链路
 
-小路把指令音频交给灵矽完成 ASR/TTS，把多人对讲音频交给七牛 RTN。灵矽不承载多人 PTT；Go 业务层负责意图执行、频道、成员、权限和设备动作。浏览器 3D 原型通过本项目的 `/api/v1/linx/ws` 连接真实灵矽设备协议，Go 服务端保存灵矽凭证并完成桥接。
+灵矽的“小路”智能体负责 ASR、自然语言理解、参数追问、工具选择和 TTS。fleet-ptt 是业务服务，通过云端 MCP 提供频道、成员、对讲和设备操作，校验身份、权限和确认状态，并返回执行结果。多人对讲音频由七牛 RTN 承载。
 
 ```mermaid
 flowchart LR
-  device[小路3D原型或硬件]
-  audio[设备音频控制]
-  bridge[受鉴权的灵矽音频接入]
-  linx[灵矽 ASR/TTS]
-  chat[Go Chat SSE与业务层]
+  device[3D模拟设备或真实硬件]
+  bridge[fleet-ptt音频桥接]
+  linx[灵矽ASR/智能体/TTS]
+  mcp[fleet-ptt云端MCP]
+  business[频道与设备业务]
   rtn[七牛RTN]
-
-  device --> audio
-  audio -->|唤醒后指令音频| bridge
-  bridge <--> linx
-  linx -->|文本意图| chat
-  chat -->|动作与TTS回答| linx
-  linx -->|TTS音频| bridge
-  bridge --> audio
-  audio -->|普通对讲音频| rtn
+  device <-->|指令音频与TTS| bridge
+  bridge <-->|设备WebSocket| linx
+  linx <-->|工具调用与结果| mcp
+  mcp --> business
+  business <-->|设备动作与回执| device
+  device <-->|多人对讲音频| rtn
 ```
 
-指令键按下后，3D 原型通过项目端 WebSocket 建立真实灵矽设备连接，发送 PCM 音频和 `listen start/stop`。灵矽完成 ASR 后以 HTTP POST + SSE 请求业务服务，业务服务返回的 `message` 由灵矽合成 TTS，再通过同一 WebSocket 返回音频。完整本地联调需要公网隧道让灵矽访问业务回调地址。
+指令键触发采集后，设备通过 `/api/v1/linx/ws` 上传 PCM 和 `listen start/stop`。灵矽理解指令后调用相应 MCP 工具，业务服务执行业务及设备动作，智能体根据结果组织回答并合成 TTS，音频沿设备 WebSocket 返回。持续云端唤醒、首次语音设置和完整音频互斥仍需专项实现与真实环境验收，不能由 MCP 接入成功推断已完成。
 
-## 2. 设备协议事实
+## 2. 统一设备身份与开机
 
-灵矽第三方设备握手要求这些 HTTP 头：
+| 字段 | 用途与来源 |
+| --- | --- |
+| `device_id` | fleet-ptt 应用设备标识；模拟设备由注册接口生成，硬件预配 |
+| `mac_id` | 灵矽 OTA、设备绑定和 WebSocket 的设备标识；模拟设备生成虚拟 MAC，硬件预配 |
+| `device_credential` | 证明设备身份；客户端安全保存，服务端只保存摘要 |
 
-- `Authorization: Bearer <token>`
-- `Device-Id`：MAC 或由硬件 ID 生成的伪 MAC
-- `Client-Id`：UUID
-- `Protocol-Version: 1`
+除身份生成/预配外，两类设备使用相同流程：
 
-握手后设备发送 `hello`，上行音频为平台支持的二进制 Opus 或 PCM，采样率、帧长和结束标志以授权环境实测为准。OTA 注册使用设备 ID 与请求体 `mac_address`，同样需要硬件信息。
+1. 模拟设备调用 `POST /api/v1/device/register` 获取身份；硬件在预配阶段取得相同字段及服务端设备记录。量产预配工具另行实现。
+2. 按电源键后，以 `device_id` 和 `device_credential` 调用 `POST /api/v1/device/boot`。
+3. 服务端按 `mac_id` 检查灵矽绑定。未绑定时上报 OTA，读取激活码，调用 `POST /xiaozhi/device/bind/{agentId}/{deviceCode}`，完成激活确认并重新获取 WebSocket 信息；激活码只在服务端 API 链路中使用，无须人工填写。
+4. 通过 `POST /api/v1/device/session` 提交昵称或恢复会话。浏览器屏幕和硬件都需提供昵称输入能力，当前首次设置使用文本输入；已有会话中的语音改名通过 MCP 执行。
+5. 建立 `/api/v1/device/ws` 业务信令及 `/api/v1/linx/ws` 语音连接，使用相同的业务事件、动作、回执和音频协议。
+6. 关机或断线停止采集、播放和 RTN 发布，释放连接；恢复后同步频道，不自动恢复讲话。
 
-浏览器原生 `WebSocket` 不能设置这些自定义握手头，因此小路 3D 原型按以下优先级接入：
+服务端配置全局 `LINX_API_KEY` 和 `LINX_AGENT_ID`，按设备获取并在内存保存灵矽 WebSocket 凭证。应用 `device_id` 不代替灵矽侧 `mac_id`，标识本身不能证明设备归属；客户端不能指定别人的设备或任意上游端点。
 
-1. 验证灵矽是否提供可用于浏览器的官方 Web 接入；
-2. 若没有，使用服务端建立受鉴权的音频桥接，由服务端连接灵矽设备协议；
-3. 未来硬件优先使用对应平台的设备 SDK 或固件协议。
+## 3. 音频桥接与硬件适配
 
-不把浏览器直接伪装成灵矽设备作为默认前提，也不把灵矽控制台页面作为小路最终交互入口。
+灵矽设备 WebSocket 握手使用 `Authorization: Bearer <token>`、`Device-Id`、`Client-Id` 和 `Protocol-Version: 1`。本项目由 Go 桥接服务发送这些头，浏览器与硬件都连接 fleet-ptt，不需要持有灵矽 API Key 或设备 Token。
 
-## 3. 音频桥接职责
+当前桥接协商 PCM，转发 16 kHz、单声道、16 bit 小端音频，以及 `listen start/stop`、STT 和 TTS 状态。设备需要实现麦克风采集、PCM 帧发送、TTS 解码/播放、播放完成状态和资源释放；实际音频格式、帧长、平台限制与延迟以真实环境测试为准。普通对讲音频通过各平台 RTN SDK 发布和订阅。
 
-桥接服务只连接经过授权的设备和灵矽端点，灵矽凭证只存服务端。它负责：
+硬件适配范围为按键/屏幕、音频输入输出、网络与 RTN SDK。频道、昵称、口令确认、音量和动作回执继续沿用设备接口；本方案的工具运行在云端 MCP 服务，不要求固件实现设备端 MCP 工具服务。设备执行 `action` 后向业务 WebSocket 返回 `action_result`，只对当前活动连接生效；收到取消或断线后不得因迟到结果恢复发送。
 
-- 设备注册、凭证和连接生命周期；
-- 握手头、`hello` 和协议版本；
-- 音频编码、采样率、帧长和结束采集；
-- ASR 音频上行与 TTS 音频下行；
-- 应用设备会话与灵矽侧 `mac_id` 映射；
-- 取消、超时、断线、关机和并发会话释放；
-- 不向浏览器暴露灵矽长期凭证，不接受浏览器指定任意设备目标。
+## 4. 云端 MCP 协议与鉴权
 
-协议验证必须记录：握手结果、实际音频格式、ASR 延迟、TTS 格式与播放完成信号、断线恢复、并发限制和资源消耗。不能假定浏览器 `MediaRecorder` 输出可直接发送；根据平台支持选择 AudioWorklet PCM 或匹配的编码方案。没有实时 ASR 文本时，设备只显示采集状态和最终识别文字。
+### 4.1 连接
 
-## 4. 身份与会话
+- `GET /api/v1/mcp`：建立 SSE，接收 `endpoint` 事件。
+- `POST /api/v1/mcp/message?session_id=...`：向 `endpoint` 指定地址提交 JSON-RPC 2.0 请求，响应经 SSE 的 `message` 事件返回。
+- 支持初始化、初始化通知、`ping`、`tools/list`、`tools/call`。
+- 所有请求携带 `Authorization: Bearer <LINX_MCP_TOKEN>`；凭证缺失或未配置时拒绝访问。
+- 反向代理必须保持 SSE 长连接并关闭响应缓冲，同时转发消息路径；只暴露 GET 路径无法完成调用。
 
-### 4.1 自动设备绑定
+### 4.2 平台身份
 
-服务端只配置灵矽 API Key 和智能体 ID。模拟设备注册时生成 `device_id`、`mac_id` 和 `device_credential`；真实硬件在工厂预配这三项信息。设备按下电源键后，使用设备凭证调用 `/api/v1/device/boot`，服务端按该设备的 `mac_id` 检查状态：已绑定设备复用 WebSocket 凭证，未绑定时先向 OTA 接口上报设备信息，读取返回的 6 位激活码并调用 `POST /xiaozhi/device/bind/{agentId}/{deviceCode}`，随后调用 OTA 激活确认并重新上报，取得 WebSocket URL 和设备 Token。验证码只在服务端 API 链路中使用，不需要用户打开控制台手动输入。
+灵矽设备会话调用云端 MCP 时，平台自动提供以下 HTTP 请求头：
 
-API Key、设备 Token 和智能体 ID 只保存在服务端环境变量，不返回浏览器、不写入数据库，也不提交到仓库。
+| 请求头 | 校验方式 |
+| --- | --- |
+| `X-Linx-Device-Id` | 与已授权应用设备的 `mac_id` 匹配 |
+| `X-Linx-Agent-Id` | 必须等于配置的 `LINX_AGENT_ID` |
+| `X-Linx-Session-Id` | 必须存在，用于关联灵矽会话 |
 
-用户、应用设备和灵矽设备是独立对象。服务端建立经过授权的映射：
+SSE 连接与后续 POST 消息必须携带一致的身份头。这些信息来自已鉴权的平台请求，不是工具参数。模型不能通过参数切换目标设备。控制台发现工具时可以不带设备上下文，允许初始化和 `tools/list`，但调用业务工具必须有完整且匹配的设备、智能体和会话身份。使用实际设备会话完成业务联调，不能把控制台工具发现成功当作设备调用成功。
 
-```text
-应用设备 ID ──绑定──> 用户 ID
-应用设备 ID ──映射──> mac_id
-应用设备 ID ──连接──> 活动 WebSocket / 音频会话
+MCP 传输 `session_id` 用于路由 SSE 连接，灵矽会话 ID 用于关联对话，JSON-RPC `id` 用于识别请求，设备 `action_id` 用于动作回执。它们不能互相替代。同一 SSE 连接内相同请求 ID 的重试复用结果，不能用同一 ID 提交不同请求；跨连接或进程重启不承诺业务幂等。每个连接最多记录 1024 个请求，达到上限需重新建立连接；工具调用串行执行。断开 SSE 或取消正在执行的请求会取消等待，但不回滚已经落库的业务结果。
+
+### 4.3 工具
+
+工具参数以 `tools/list` 返回的 JSON Schema 为准；业务层同时校验参数。灵矽负责将自然语言转换为明确参数，缺少信息时追问，不把用户原话交给业务层做关键词路由。
+
+| 工具 | 参数 | 行为 |
+| --- | --- | --- |
+| `create_channel` | `name` | 创建并进入频道，返回口令 |
+| `join_channel` | `code` 或 `name`，二选一 | 按口令先生成待确认事项；按名称加入，同名时要求澄清 |
+| `confirm_action` | 无 | 执行当前设备、当前灵矽会话的有效口令入群或改名待办 |
+| `cancel_action` | 无 | 清除当前设备、当前灵矽会话的待办 |
+| `switch_channel` | `name` 或 `index`，二选一 | 切换到已加入频道；序号从 1 开始 |
+| `previous_channel` | 无 | 返回上一频道 |
+| `talk_start` / `talk_end` | 无 | 开始或结束对讲 |
+| `list_my_channels` | 无 | 查询频道列表和当前频道 |
+| `list_speakers` | 无 | 查询当前频道讲话成员 |
+| `show_join_code` / `show_join_qr` | 无 | 查询口令或让设备显示二维码 |
+| `set_volume` | `level`（0–100 整数）或 `adjustment`（`up`/`down`），二选一 | 设置绝对音量或增减 10 个百分点 |
+| `set_nickname` | `name` | 生成改名待办，复述后等待确认 |
+
+口令为六位，使用去掉 `0/O`、`1/I` 的字符集；智能体将中文数字和分隔符转换为明确口令，服务端仍校验格式。口令入群与昵称修改的确认窗口为两分钟；无待办、取消或过期后不能执行。同设备的另一灵矽会话不能确认该待办；无关的新业务指令清除该设备的待办。服务端校验待办、会话与有效期，用户是否明确确认由智能体依据对话判断，需在角色指令中要求下一轮确认并在真实联调中验证。
+
+工具结果为标准 MCP `content` 文本和 `isError` 标志。业务错误要反馈给智能体，由其说明失败原因。需要本地执行的切群、开始/结束对讲、音量、二维码和改名复用设备 WebSocket 动作与回执；创建/加入频道还需观察对应频道事件和媒体进房状态，不能仅凭数据库写入或 MCP 响应成功推断真实音频成功。
+
+## 5. 配置灵矽智能体与本地隧道
+
+1. 在 `.env` 填写 `SESSION_SECRET`、RTN 凭证、`LINX_API_KEY`、`LINX_AGENT_ID`。生成独立随机值作为 `LINX_MCP_TOKEN`，勿把 API Key 当作 MCP Token。
+2. 启动本地服务，将 HTTPS 公网隧道指向 Go 服务（默认本地 8080 端口）。把隧道基址填入 `PUBLIC_BASE_URL`。隧道须支持 SSE、POST 消息和 WebSocket；更换临时域名后同步更新配置。
+3. 在灵矽控制台的“自定义 MCP”创建私有服务，选择 SSE，地址填写 `https://<隧道域名>/api/v1/mcp`，请求头设置 `Authorization: Bearer <LINX_MCP_TOKEN>`。只填写 SSE 入口，消息地址由服务端的 `endpoint` 事件提供。
+4. 将该 MCP 开通并关联到“小路”智能体的技能/扩展，保留智能体模型用于语义理解。确认它能发现工具列表。官方 API 也可创建服务、订阅并配置智能体 MCP 关联，操作关联列表时需保留其他已选择 MCP。
+5. 在角色指令中要求：频道/对讲/设备操作必须调用业务工具；根据工具结果回答；缺参数先追问；需要确认时先复述，用户明确确认后才调用 `confirm_action`；不得猜测设备身份、成功状态或频道口令。
+6. 用 3D 原型开机完成自动绑定与昵称设置，建立业务及语音连接，按指令键开始真实音频测试。
+
+官方 SSE 配置结构示例（凭证使用部署时的真实值，不提交到 Git）：
+
+```json
+{
+  "type": "sse",
+  "sse": {
+    "type": 0,
+    "url": "https://<隧道域名>/api/v1/mcp",
+    "header": { "Authorization": "Bearer <LINX_MCP_TOKEN>" }
+  }
+}
 ```
 
-设备 ID 只用于定位，不作为用户凭证。绑定前验证设备归属；同一设备只允许一个当前频道和一个上行状态。语音首次设置只允许初始化昵称和绑定，完成后签发正常设备会话；不能开放未鉴权的通用音频代理。
+## 6. 真实联调与验收边界
 
-灵矽 Chat 回调使用：
+需要依次验证：设备开机绑定、音频握手、ASR、MCP 工具发现、设备身份请求头、工具调用、业务 WebSocket 动作回执、TTS 和 RTN 双端实际声音。记录设备/MAC、灵矽会话 ID、JSON-RPC ID、action_id、时间和结果，日志不记录凭证。
 
-- `auth.device_id`（灵矽侧 mac_id）定位已授权的应用设备映射；
-- `details.msg` 作为本轮识别文本；
-- `details.session_id` 关联本轮对话与动作；
-- `Authorization: Bearer <LINX_CHAT_TOKEN>` 校验回调来源。
+覆盖建群、确认入群、切群/回切、开始/结束对讲、音量、昵称和邀请信息；检查无效身份、缺参、业务失败、确认过期、重复请求、断线和迟到回执。TTS 播放期间的监听暂停、远端回声、驾驶室噪声、连续说法和对讲中唤醒需要独立音频测试。浏览器后台/锁屏和硬件常驻能力分别记录。
 
-动作还需要由服务端生成唯一 `action_id`，处理重复回调、取消、迟到结果和设备断线。`session_id` 只表示灵矽会话，不能单独充当业务幂等键。
-
-## 5. Chat SSE 业务契约
-
-Go 接收 `POST /api/v1/linx/chat`，校验请求类型、Bearer、设备映射、会话 ID 和动作权限。响应返回一条 `message` 和一条 `message_end`；`message` 的 `details.answer` 用于 TTS，`details.intent` 表示动作类型，`session_id` 原样回传。
-
-支持的意图：
-
-| 意图 | 作用 |
-|------|------|
-| `create_channel` | 创建并进入频道，逐位播报口令 |
-| `join_channel` | 按口令或名称加入；口令先复述 |
-| `confirm_join` / `cancel_join` | 确认或取消待加入动作 |
-| `switch_channel` | 按名称或序号切换 |
-| `previous_channel` | 回到上一次成功使用的频道 |
-| `talk_start` / `talk_end` | 请求开始或结束对讲 |
-| `list_my_channels` | 播报频道列表与当前频道 |
-| `list_speakers` | 播报正在讲话的成员 |
-| `show_join_code` / `show_join_qr` | 播报口令或控制屏幕展示二维码 |
-| `set_volume` | 调整本设备播放音量 |
-| `set_nickname` | 复述并确认后修改昵称 |
-
-口令为 6 位，去掉 `0/O`、`1/I`；中文数字和分隔符先归一化再校验。缺少参数时追问，同名或歧义时澄清。口令确认窗口为 2 分钟，过期或无待办的确认不执行动作。业务失败也返回可播报的 `answer`。
-
-SSE 文案只表示业务处理结果；设备动作、房间切换、音频发布和本地音量必须通过设备控制层执行并上报结果。业务层不能仅凭 SSE 写成功就播报“已发送”或“已切换”。
-
-## 6. TTS、回声与对讲互斥
-
-- “开始对讲”的提示音播放完成后才允许 RTN 发布。
-- 检测到“你好小路”后立即阻断 RTN 上行，再开始指令采集。
-- TTS 播放期间暂停灵矽监听和指令上传，防止设备自唤醒。
-- 指令期间降低或暂停远端对讲播放，防止远端声音进入识别。
-- 远端播放、扬声器回声、耳麦和驾驶室噪声需要实测；未通过测试不承诺零误唤醒。
-- 首版接受唤醒检测完成前的少量片段可能被频道听到；检测后不得继续上传指令音频。
-
-## 7. 实施验收
-
-先完成灵矽官方 Web 接入或音频桥接验证，再实现 3D 原型内指令。验收覆盖：
-
-- 设备注册、授权和会话绑定；
-- “你好小路”连续说法与对讲中唤醒；
-- 建群、口令确认入群、切群、回切和开始/结束对讲；
-- TTS 播报、远端回声和指令/RTN 音频互斥；
-- 取消、过期、重复回调、迟到回执和设备断线；
-- TTS/ASR 音频格式、延迟、并发与资源释放；
-- 设备动作成功/失败与屏幕、指示灯、业务状态一致。
-
-在授权环境完成上述实测前，不能把浏览器原型或 Chat SSE 回调标记为小路硬件语音闭环完成。
+当前尚未完成真实灵矽全链路联调。自动化协议与业务测试验证服务端契约，不能代替平台实际请求头、工具选择、音频格式、唤醒或 RTN 听感的验证；验收记录见 [acceptance.md](./acceptance.md)。

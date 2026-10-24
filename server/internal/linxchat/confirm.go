@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// JoinConfirmTTL 是设备待确认操作和参数追问的有效时间。
+// JoinConfirmTTL 是设备待确认操作的有效时间。
 const JoinConfirmTTL = 2 * time.Minute
 
 type pendingJoin struct {
@@ -13,7 +13,7 @@ type pendingJoin struct {
 	Until time.Time
 }
 
-// JoinGate 为每个设备保存一个待确认操作或参数追问。
+// JoinGate 为每个设备保存一个待确认操作。
 // Offer 只登记内容，只有明确确认才能消费待办。
 type JoinGate struct {
 	ttl     time.Duration

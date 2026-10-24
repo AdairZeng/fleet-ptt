@@ -7,9 +7,9 @@ export default function App() {
   const control = useDeviceController()
   const { device, session } = control
   const screen = !device.powered ? <div className="device-sleep">
-    <div className="sleep-symbol" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-    <h2>小路</h2>
-    <p className="sleep-tagline">让同行，更有默契。</p>
+    <div className="sleep-orbit" aria-hidden="true"><span /></div>
+    <p className="sleep-wordmark">XIAOLU</p><h2>随时，同路。</h2>
+    <p className="sleep-tagline">一句话，即刻连接。</p>
     <div className="sleep-instruction"><span>已关机</span><p>长按右下方电源键，开启连接</p></div>
   </div> : device.phase === 'booting' ? <p>启动中…</p> : !session || control.editingNickname ? (
     <NicknamePage onEnter={control.enter} joinRequest={control.joinRequest} firstSetup={!session} registerControls={control.registerSetupControls} />

@@ -22,7 +22,7 @@ export class DeviceFeedback {
     signal.throwIfAborted()
     const context = this.context
     if (!context || context.state !== 'running') throw new Error('请先点按设备以启用声音')
-    const response = await fetch('/audio/welcome.wav', { signal })
+    const response = await fetch('/audio/welcome.wav?v=linx-1', { signal })
     if (!response.ok) throw new Error('开机欢迎语加载失败')
     const buffer = await context.decodeAudioData(await response.arrayBuffer())
     signal.throwIfAborted()

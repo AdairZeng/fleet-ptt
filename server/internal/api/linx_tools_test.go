@@ -49,6 +49,15 @@ func TestLinxCommandValidation(t *testing.T) {
 		{"cancel_action", `{}`, true},
 		{"talk_start", `{"force":true}`, false},
 		{"talk_end", ``, true},
+		{"list_online_members", `{}`, true},
+		{"invite_member", `{"name":"装货","recipient_name":"老王"}`, true},
+		{"invite_member", `{"name":"装货","recipient_id":"u-1"}`, true},
+		{"invite_member", `{"name":"装货"}`, false},
+		{"invite_member", `{"name":"装货","recipient_name":"老王","recipient_id":"u-1"}`, false},
+		{"invite_member", `{"recipient_name":"老王"}`, false},
+		{"accept_invitation", `{}`, true},
+		{"accept_invitation", `{"invitation_id":null}`, false},
+		{"reject_invitation", `{"invitation_id":"invite-1"}`, true},
 		{"unknown", `{}`, false},
 	} {
 		t.Run(tc.tool+tc.args, func(t *testing.T) {

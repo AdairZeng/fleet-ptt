@@ -83,7 +83,16 @@ func linxTools() []mcp.Tool {
 	index := map[string]any{"type": "integer", "minimum": 1, "description": "list_my_channels 列表中的序号，从 1 开始"}
 	level := map[string]any{"type": "integer", "minimum": 0, "maximum": 100}
 	adjustment := map[string]any{"type": "string", "enum": []string{"up", "down"}, "description": "音量增加或减少 10"}
+	id := map[string]any{"type": "string", "minLength": 1, "maxLength": 64, "description": "服务端返回的完整 ID，不能猜测"}
 	return []mcp.Tool{
+		{Name: "list_online_members", Description: "查询这套服务当前可联系的其他在线设备，包含昵称和成员 ID，跨频道可邀请；在线不代表在本频道收听。", InputSchema: toolSchema(nil)},
+		{Name: "invite_member", Description: "创建频道并定向邀请在线成员。自己已有唯一同名频道时复用；发起者切入，收件人接受才加入。name 是频道名称；recipient_name 与 recipient_id 二选一。同名必须询问用户并用查询结果中的完整成员 ID，不得猜选。", InputSchema: func() map[string]any {
+			s := exclusiveToolSchema(map[string]any{"name": name, "recipient_name": name, "recipient_id": id}, "recipient_name", "recipient_id")
+			s["required"] = []string{"name"}
+			return s
+		}()},
+		{Name: "accept_invitation", Description: "仅在用户明确接受收到的邀请时调用。invitation_id 可选，省略表示当前唯一待处理邀请。", InputSchema: toolSchema(map[string]any{"invitation_id": id})},
+		{Name: "reject_invitation", Description: "用户明确拒绝收到的邀请时调用，省略 invitation_id 表示当前待处理邀请。", InputSchema: toolSchema(map[string]any{"invitation_id": id})},
 		{Name: "create_channel", Description: "创建并进入频道。缺少名称时先询问用户。", InputSchema: toolSchema(map[string]any{"name": name}, "name")},
 		{Name: "join_channel", Description: "按口令或频道名称加入频道，二选一。口令加入先返回待确认内容，须等待用户下一次明确确认后调用 confirm_action。", InputSchema: exclusiveToolSchema(map[string]any{"code": code, "name": name}, "code", "name")},
 		{Name: "switch_channel", Description: "切换已加入的频道，按名称或列表序号二选一。", InputSchema: exclusiveToolSchema(map[string]any{"name": name, "index": index}, "name", "index")},
@@ -148,19 +157,32 @@ func linxCommand(name string, arguments json.RawMessage) (linxchat.Utterance, er
 			return command, fmt.Errorf("参数 %q 不能为 null", field)
 		}
 	}
-	for _, field := range []string{"name", "code", "adjustment"} {
+	for _, field := range []string{"name", "code", "adjustment", "recipient_name", "recipient_id", "invitation_id"} {
 		if raw, ok := fields[field]; ok {
 			var value string
 			if err := json.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
 				return command, fmt.Errorf("参数 %q 必须是非空字符串", field)
 			}
 			switch field {
-			case "name":
+			case "name", "recipient_name":
 				value = strings.TrimSpace(value)
 				if utf8.RuneCountInString(value) > 32 || strings.ContainsFunc(value, unicode.IsControl) {
 					return command, errors.New("名称必须为 1 到 32 字，不能包含控制字符")
 				}
-				command.Name = value
+				if field == "recipient_name" {
+					command.RecipientName = value
+				} else {
+					command.Name = value
+				}
+			case "recipient_id", "invitation_id":
+				if len(value) > 64 || strings.ContainsFunc(value, unicode.IsControl) {
+					return command, errors.New("ID 格式无效")
+				}
+				if field == "recipient_id" {
+					command.RecipientID = value
+				} else {
+					command.InvitationID = value
+				}
 			case "code":
 				if !channel.ValidJoinCode(value) || value != channel.NormalizeJoinCode(value) {
 					return command, errors.New("口令必须是六位大写字母或数字，不能包含 0、1、O、I")
@@ -197,6 +219,10 @@ func linxCommand(name string, arguments json.RawMessage) (linxchat.Utterance, er
 		}
 	}
 	switch name {
+	case "invite_member":
+		if command.Name == "" || (command.RecipientName == "") == (command.RecipientID == "") {
+			return command, errors.New("必须提供频道 name 和 recipient_name 或 recipient_id 之一")
+		}
 	case "create_channel", "set_nickname":
 		if command.Name == "" {
 			return command, errors.New("缺少 name，请先询问用户名称")

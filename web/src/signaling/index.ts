@@ -1,4 +1,5 @@
 import { authHeaders, type Session } from '../state/session.ts'
+import { readInvitation, type Invitation } from '../state/invitations.ts'
 
 export type Member = {
   user_id: string
@@ -11,6 +12,7 @@ export type ActionExecutor = (action: DeviceCommand, signal: AbortSignal) => Pro
 
 export type SignalEvent =
   | DeviceCommand
+  | { type: 'invitation'; invitation: Invitation }
   | { type: 'action_cancel'; action_id: string }
   | { type: 'channel_state'; channel_id: string; name: string }
   | { type: 'talk_start'; channel_id: string; user_id: string }
@@ -41,6 +43,10 @@ export function parseSignal(raw: string): SignalEvent | null {
   }
   const rec = value as Record<string, unknown>
   switch (rec.type) {
+    case 'invitation': {
+      const invitation = readInvitation(rec.invitation)
+      return invitation ? { type: 'invitation', invitation } : null
+    }
     case 'action':
       if (typeof rec.action_id !== 'string' || !rec.action_id || typeof rec.action !== 'string') return null
       if (rec.channel_id !== undefined && typeof rec.channel_id !== 'string') return null

@@ -2,6 +2,8 @@ package linxbridge
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -230,5 +232,96 @@ func TestWakeNotificationsSerializedWithTransitions(t *testing.T) {
 	<-sttDone
 	if first, second := <-events, <-events; first.State != "followup" || second.State != "detected" {
 		t.Fatalf("out-of-order events: %+v %+v", first, second)
+	}
+}
+
+func TestInvitationAnnouncementWaitsForDeviceAndDoesNotAuthorizeTools(t *testing.T) {
+	r := NewWakeRegistry()
+	events := make(chan WakeEvent, 4)
+	s := r.Open("recipient", "voice", func(e WakeEvent) { events <- e }, nil)
+	defer r.Close("recipient", s)
+	sent := make(chan string, 1)
+	s.announce = func(ctx context.Context, text string) error { sent <- text; return nil }
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Announce(context.Background(), "recipient", "老王邀请你加入装货，请说接受或拒绝")
+	}()
+	e := <-events
+	if e.State != "detected" {
+		t.Fatal(e)
+	}
+	select {
+	case <-sent:
+		t.Fatal("announcement sent before stop ack")
+	default:
+	}
+	if _, _, err := r.Authorize(context.Background(), "recipient", "voice"); err == nil {
+		t.Fatal("announcement authorized model tools")
+	}
+	s.Control("ready", e.TurnID)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if <-sent == "" {
+		t.Fatal("missing announcement")
+	}
+	if !s.Output("tts", "start") || !s.Output("tts", "stop") {
+		t.Fatal("announcement TTS suppressed")
+	}
+	s.Control("playback_done", e.TurnID)
+	reply, ok := s.STT("接受")
+	if !ok {
+		t.Fatal("reply not accepted")
+	}
+	s.Control("ready", reply.TurnID)
+	if _, cancel, err := r.Authorize(context.Background(), "recipient", "voice"); err != nil {
+		t.Fatal(err)
+	} else {
+		cancel()
+	}
+}
+
+func TestInvitationAnnouncementRejectsBusyOrDisconnected(t *testing.T) {
+	r := NewWakeRegistry()
+	if r.Announce(context.Background(), "missing", "invite") == nil {
+		t.Fatal("offline accepted")
+	}
+	s := r.Open("recipient", "voice", nil, nil)
+	defer r.Close("recipient", s)
+	s.announce = func(context.Context, string) error { return nil }
+	s.STT("你好小路")
+	if r.Announce(context.Background(), "recipient", "invite") == nil {
+		t.Fatal("busy accepted")
+	}
+}
+
+func TestAnnouncementFailureRestoresStandby(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		t.Run(fmt.Sprint(ready), func(t *testing.T) {
+			r := NewWakeRegistry()
+			events := make(chan WakeEvent, 4)
+			s := r.Open("recipient", "voice", func(e WakeEvent) { events <- e }, nil)
+			defer r.Close("recipient", s)
+			s.announce = func(context.Context, string) error { return errors.New("upstream disconnected") }
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- r.Announce(ctx, "recipient", "invite") }()
+			event := <-events
+			if ready {
+				s.Control("ready", event.TurnID)
+			} else {
+				cancel()
+			}
+			if err := <-done; err == nil {
+				t.Fatal("failure reported success")
+			}
+			if event = <-events; event.State != "standby" || !s.CaptureAllowed() {
+				t.Fatalf("not restored: %+v", event)
+			}
+			if _, ok := s.STT("你好小路"); !ok {
+				t.Fatal("failure blocked subsequent wake")
+			}
+		})
 	}
 }

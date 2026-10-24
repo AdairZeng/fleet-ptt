@@ -19,19 +19,26 @@ const (
 	// IntentTalkEnd 对应「结束对讲」。
 	IntentTalkEnd Intent = "talk_end"
 	// IntentListChannels 对应「我有哪些频道」。
-	IntentListChannels    Intent = "list_my_channels"
-	IntentPreviousChannel Intent = "previous_channel"
-	IntentListSpeakers    Intent = "list_speakers"
-	IntentShowJoinCode    Intent = "show_join_code"
-	IntentShowJoinQR      Intent = "show_join_qr"
-	IntentSetVolume       Intent = "set_volume"
-	IntentSetNickname     Intent = "set_nickname"
+	IntentListChannels     Intent = "list_my_channels"
+	IntentPreviousChannel  Intent = "previous_channel"
+	IntentListSpeakers     Intent = "list_speakers"
+	IntentShowJoinCode     Intent = "show_join_code"
+	IntentShowJoinQR       Intent = "show_join_qr"
+	IntentSetVolume        Intent = "set_volume"
+	IntentSetNickname      Intent = "set_nickname"
+	IntentListOnline       Intent = "list_online_members"
+	IntentInvite           Intent = "invite_member"
+	IntentAcceptInvitation Intent = "accept_invitation"
+	IntentRejectInvitation Intent = "reject_invitation"
 )
 
 // Utterance 是通过 MCP 参数校验后的业务命令。
 type Utterance struct {
-	Intent Intent
-	Name   string
-	Code   string
-	Index  int
+	Intent        Intent
+	Name          string
+	Code          string
+	Index         int
+	RecipientName string
+	RecipientID   string
+	InvitationID  string
 }

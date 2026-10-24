@@ -168,3 +168,28 @@ func TestCreateChannelAndJoin(t *testing.T) {
 		t.Fatalf("after switch talking %v err %v", talking, err)
 	}
 }
+
+func TestEnsureChannelPreservesSingletonAndRejectsCodeCollision(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	ch := store.Channel{ID: "public", Name: "公共频道", JoinCode: "ABC234", CreatedBy: "system", CreatedAt: time.Unix(1700000000, 0).UTC()}
+	got, err := st.EnsureChannel(ctx, ch)
+	if err != nil || got != ch {
+		t.Fatalf("ensure %+v %v", got, err)
+	}
+	retry := ch
+	retry.JoinCode = "DEF567"
+	retry.CreatedAt = ch.CreatedAt.Add(time.Hour)
+	got, err = st.EnsureChannel(ctx, retry)
+	if err != nil || got != ch {
+		t.Fatalf("retry mutated singleton %+v %v", got, err)
+	}
+	collision := ch
+	collision.ID = "other"
+	if _, err := st.EnsureChannel(ctx, collision); !errors.Is(err, store.ErrJoinCodeTaken) {
+		t.Fatalf("collision error %v", err)
+	}
+	if _, err := st.ChannelByID(ctx, collision.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("collision created channel: %v", err)
+	}
+}

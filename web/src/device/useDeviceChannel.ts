@@ -5,6 +5,7 @@ import type { DeviceAction } from './DeviceShell.tsx'
 import type { DeviceEvent } from './controller.ts'
 import type { RoomSnapshot } from './useDeviceTalk.ts'
 import { LinxDevice } from '../linx/index.ts'
+import { readInvitation } from '../state/invitations.ts'
 import { useChannelSignaling } from '../signaling/useChannelSignaling.ts'
 import {
   createChannel,
@@ -291,7 +292,12 @@ export function useDeviceChannel({
       requireActive()
       if (switchingRef.current && action.action !== 'talk_end') throw new Error('正在切换频道')
       if (signal.aborted) throw new Error('动作已取消')
-      if (action.action === 'talk_end') {
+      if (action.action === 'announce_invitation') {
+        const invitation = readInvitation(JSON.parse(action.value || 'null'))
+        if (!invitation || invitation.recipient_id !== session.user_id) throw new Error('邀请无效')
+        if (document.hidden || !voiceReady) throw new Error('设备语音未就绪，请保持页面前台')
+        setVoiceNotice(`${invitation.sender_name}邀请你加入${invitation.channel_name}，请说接受或拒绝`)
+      } else if (action.action === 'talk_end') {
         await stopUplinkRef.current()
       } else if (action.action === 'talk_start') {
         if (!channel || action.channel_id !== channel.channel_id || busy) throw new Error('设备尚未准备好发送')

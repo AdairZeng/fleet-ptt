@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -39,6 +40,30 @@ func (e voiceExec) run(ctx context.Context, u store.User, parsed linxchat.Uttera
 	}
 	var out voiceResult
 	switch parsed.Intent {
+	case linxchat.IntentListOnline:
+		members, err := e.hub.OnlineMembers(ctx, u.ID)
+		if err != nil {
+			out = fail(parsed.Intent, "读取在线成员失败")
+			break
+		}
+		if len(members) == 0 {
+			out = voiceResult{Intent: parsed.Intent, Answer: "当前没有其他在线成员"}
+			break
+		}
+		parts := []string{}
+		for _, m := range members {
+			parts = append(parts, fmt.Sprintf("%s（成员 ID %s）", m.DisplayName, m.UserID))
+		}
+		out = voiceResult{Intent: parsed.Intent, Answer: "当前在线成员：" + strings.Join(parts, "、")}
+	case linxchat.IntentInvite:
+		inv, err := e.hub.Invite(ctx, u, parsed.Name, parsed.RecipientName, parsed.RecipientID, now)
+		if err != nil {
+			out = fail(parsed.Intent, err.Error())
+		} else {
+			out = voiceResult{Intent: parsed.Intent, Answer: "已进入" + inv.ChannelName + "并送达邀请，等待对方接受"}
+		}
+	case linxchat.IntentAcceptInvitation, linxchat.IntentRejectInvitation:
+		out = e.respondInvitation(ctx, u, parsed.InvitationID, parsed.Intent == linxchat.IntentAcceptInvitation, now)
 	case linxchat.IntentPreviousChannel:
 		target, err := e.channels.Store.PreviousChannel(ctx, u.ID)
 		if err != nil {
@@ -94,7 +119,11 @@ func (e voiceExec) run(ctx context.Context, u store.User, parsed linxchat.Uttera
 	case linxchat.IntentConfirmJoin:
 		out = e.confirmJoin(ctx, u, now)
 	case linxchat.IntentCancelJoin:
-		out = e.cancelJoin(u.DeviceID, now)
+		if _, ok := e.gate.Pending(u.DeviceID, now); !ok && len(e.hub.Invitations(u.ID, now)) > 0 {
+			out = e.respondInvitation(ctx, u, "", false, now)
+		} else {
+			out = e.cancelJoin(u.DeviceID, now)
+		}
 	case linxchat.IntentSwitchChannel:
 		out = e.switchChannel(ctx, u.ID, parsed)
 	case linxchat.IntentTalkStart:
@@ -187,6 +216,9 @@ func (e voiceExec) confirmPending(deviceID string, now time.Time) (string, bool)
 func (e voiceExec) confirmJoin(ctx context.Context, u store.User, now time.Time) voiceResult {
 	pending, ok := e.confirmPending(u.DeviceID, now)
 	if !ok {
+		if len(e.hub.Invitations(u.ID, now)) > 0 {
+			return e.respondInvitation(ctx, u, "", true, now)
+		}
 		return fail(linxchat.IntentConfirmJoin, "没有本次会话的有效待确认操作，请重新说出指令")
 	}
 	if nickname, ok := strings.CutPrefix(pending, "nickname:"); ok {
@@ -382,4 +414,20 @@ func (e voiceExec) rename(ctx context.Context, u store.User, nickname string) vo
 		return fail(linxchat.IntentSetNickname, "昵称已保存，设备显示未同步："+err.Error())
 	}
 	return voiceResult{Intent: linxchat.IntentSetNickname, Answer: "以后叫你" + nickname}
+}
+
+func (e voiceExec) respondInvitation(ctx context.Context, u store.User, id string, accept bool, now time.Time) voiceResult {
+	intent := linxchat.IntentRejectInvitation
+	if accept {
+		intent = linxchat.IntentAcceptInvitation
+	}
+	inv, err := e.hub.RespondInvitation(ctx, u, id, accept, now)
+	if err != nil {
+		return fail(intent, err.Error())
+	}
+	answer := "已拒绝邀请"
+	if accept {
+		answer = "已加入" + inv.ChannelName
+	}
+	return voiceResult{Intent: intent, Answer: answer}
 }

@@ -2,6 +2,7 @@ import { memberCountText } from '../state/presence.ts'
 import { JoinQR } from './JoinQR.tsx'
 import { ScanJoin } from './ScanJoin.tsx'
 import { TalkPanel } from './TalkPanel.tsx'
+import { Invitations } from './Invitations.tsx'
 import { useDeviceChannel, type DeviceChannelProps } from '../device/useDeviceChannel.ts'
 
 export function ChannelPage(props: DeviceChannelProps) {
@@ -126,6 +127,7 @@ export function ChannelPage(props: DeviceChannelProps) {
       ) : null}
 
       <nav className="manual-jumps" aria-label="手动兜底">
+        <a href="#invitations">在线成员与邀请</a>
         {hasList ? <a href="#channel-list">频道列表</a> : null}
         {channel ? <a href="#join-code">口令二维码</a> : null}
         <a href="#join-by-code">口令 / 扫码</a>
@@ -133,6 +135,7 @@ export function ChannelPage(props: DeviceChannelProps) {
       </nav>
 
       <div className="manual">
+        <Invitations session={session} channelName={channel?.name || ''} subscribe={signaling.subscribe} stopUplink={() => stopUplinkRef.current()} />
         {hasList ? (
           <section className="channel-list" id="channel-list">
             <h2>频道列表</h2>

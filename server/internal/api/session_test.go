@@ -186,3 +186,102 @@ func newService(t *testing.T) *user.Service {
 	t.Cleanup(func() { _ = st.Close() })
 	return &user.Service{Store: st, Secret: "test-secret"}
 }
+
+func TestSessionStartsPublicButRenewalPreservesChannel(t *testing.T) {
+	svc := newService(t)
+	h := newMux(svc)
+	body := `{"nickname":"司机甲","device_id":"123e4567-e89b-42d3-a456-426614174010"}`
+	res := postSession(t, h, body)
+	if res.Code != http.StatusOK {
+		t.Fatalf("session %d %s", res.Code, res.Body)
+	}
+	var session struct {
+		UserID string `json:"user_id"`
+	}
+	decode(t, res, &session)
+	channels := &channel.Service{Store: svc.Store}
+	current, err := channels.Current(context.Background(), session.UserID)
+	if err != nil || current.Channel.ID != channel.PublicID {
+		t.Fatalf("first session current %+v err=%v", current, err)
+	}
+	temporary, err := channels.Create(context.Background(), session.UserID, "装货频道", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = postSession(t, h, body)
+	if res.Code != http.StatusOK {
+		t.Fatalf("renew %d %s", res.Code, res.Body)
+	}
+	current, err = channels.Current(context.Background(), session.UserID)
+	if err != nil || current.Channel.ID != temporary.Channel.ID {
+		t.Fatalf("renewal changed channel %+v err=%v", current, err)
+	}
+}
+
+func TestBootReturnsPublicListeningAfterProvision(t *testing.T) {
+	for _, provisionOK := range []bool{true, false} {
+		t.Run(map[bool]string{true: "success", false: "failure"}[provisionOK], func(t *testing.T) {
+			svc := newService(t)
+			ctx := context.Background()
+			proof, err := svc.RegisterDevice(ctx, nil, "", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			session, err := svc.DeviceSession(ctx, "司机甲", proof.DeviceID, proof.Credential, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			channels := &channel.Service{Store: svc.Store}
+			initial, err := channels.Create(ctx, session.User.ID, "装货频道", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := channels.SetTalking(ctx, session.User.ID, true); err != nil {
+				t.Fatal(err)
+			}
+			ota := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !provisionOK {
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				_, _ = w.Write([]byte(`{"websocket":{"url":"wss://example.test/ws","token":"test-token"}}`))
+			}))
+			defer ota.Close()
+			manager := linxbridge.NewManager(linxbridge.ProvisionConfig{APIKey: "test-key", AgentID: "test-agent", OTAURL: ota.URL})
+			mux := http.NewServeMux()
+			api.Register(mux, svc, channels, rtn.Signer{}, "", "test-agent", manager)
+			for i := 0; i < 2; i++ {
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/device/boot", nil)
+				req.Header.Set("X-Device-ID", proof.DeviceID)
+				req.Header.Set("X-Device-Credential", proof.Credential)
+				res := httptest.NewRecorder()
+				mux.ServeHTTP(res, req)
+				wantStatus := http.StatusOK
+				if !provisionOK {
+					wantStatus = http.StatusBadGateway
+				}
+				if res.Code != wantStatus {
+					t.Fatalf("boot %d %s", res.Code, res.Body)
+				}
+				current, err := channels.Current(ctx, session.User.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				talking, err := channels.Talking(ctx, session.User.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if provisionOK {
+					if current.Channel.ID != channel.PublicID || talking {
+						t.Fatalf("boot current=%+v talking=%v", current, talking)
+					}
+					if err := channels.SetTalking(ctx, session.User.ID, true); err != nil {
+						t.Fatal(err)
+					}
+				} else if current.Channel.ID != initial.Channel.ID || !talking {
+					t.Fatalf("failed boot mutated session current=%+v talking=%v", current, talking)
+				}
+			}
+		})
+	}
+}

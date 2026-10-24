@@ -48,6 +48,8 @@ type WakeSession struct {
 	disconnect    context.CancelFunc
 	closed        bool
 	resumeStandby bool
+	announcement  bool
+	announce      func(context.Context, string) error
 }
 
 func (r *WakeRegistry) Open(deviceID, sessionID string, emit func(WakeEvent), disconnect context.CancelFunc) *WakeSession {
@@ -87,7 +89,7 @@ func (r *WakeRegistry) Authorize(ctx context.Context, deviceID, sessionID string
 		return nil, nil, ErrNotAwake
 	}
 	s.mu.Lock()
-	if s.closed || s.turnCtx == nil || (s.state != "pending" && s.state != "processing" && s.state != "playing") {
+	if s.closed || s.announcement || s.turnCtx == nil || (s.state != "pending" && s.state != "processing" && s.state != "playing") {
 		s.mu.Unlock()
 		return nil, nil, ErrNotAwake
 	}
@@ -141,6 +143,7 @@ func (s *WakeSession) STT(text string) (WakeEvent, bool) {
 	s.clearTurnLocked()
 	s.turnID, s.state = turnID, "pending"
 	s.resumeStandby = false
+	s.announcement = false
 	s.ready = make(chan struct{})
 	s.readyClosed = false
 	s.turnCtx, s.turnCancel = context.WithCancel(context.Background())
@@ -322,4 +325,68 @@ func (r *WakeRegistry) EndAfterPlayback(ctx context.Context) {
 	if !s.closed && s.turnCtx == authorization.turnContext && s.turnCtx.Err() == nil {
 		s.resumeStandby = true
 	}
+}
+
+// Announce speaks a server-created invitation without authorizing model tools.
+// The device must acknowledge stopping RTN before upstream speech is requested.
+func (r *WakeRegistry) Announce(ctx context.Context, deviceID, text string) error {
+	r.mu.Lock()
+	s := r.sessions[deviceID]
+	r.mu.Unlock()
+	if s == nil {
+		return errors.New("接收方语音未连接")
+	}
+	s.mu.Lock()
+	if s.closed || s.announce == nil || (s.state != "standby" && s.state != "followup") {
+		s.mu.Unlock()
+		return errors.New("接收方正在处理语音，请稍后邀请")
+	}
+	id, err := newClientID()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.clearTurnLocked()
+	s.turnID, s.state, s.announcement, s.resumeStandby = id, "pending", true, false
+	s.ready, s.readyClosed = make(chan struct{}), false
+	s.turnCtx, s.turnCancel = context.WithCancel(context.Background())
+	s.expireLocked(processingLimit)
+	turnCtx, ready, send := s.turnCtx, s.ready, s.announce
+	s.emitLocked(WakeEvent{Type: "wake", State: "detected", Text: text, SessionID: s.sessionID, TurnID: id})
+	s.mu.Unlock()
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !s.closed && s.turnCtx == turnCtx {
+			s.clearTurnLocked()
+			s.state = "standby"
+			s.emitLocked(WakeEvent{Type: "wake", State: "standby"})
+		}
+	}()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-turnCtx.Done():
+		return errors.New("接收方已取消邀请播报")
+	case <-timer.C:
+		return errors.New("接收方未确认停止对讲")
+	case <-ready:
+	}
+	if turnCtx.Err() != nil {
+		return errors.New("接收方已取消邀请播报")
+	}
+	callCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(turnCtx, cancel)
+	defer func() { stop(); cancel() }()
+	if err := send(callCtx, text); err != nil {
+		return err
+	}
+	completed = true
+	return nil
 }

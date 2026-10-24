@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -14,116 +13,80 @@ import (
 )
 
 type client struct {
-	t        *testing.T
-	server   *httptest.Server
-	response *http.Response
-	reader   *bufio.Reader
-	endpoint string
-	identity Identity
+	t         *testing.T
+	server    *httptest.Server
+	transport *Server
+	endpoint  string
+	identity  Identity
+	sessionID string
 }
 
 func start(t *testing.T, identity Identity, call Call) *client {
 	t.Helper()
 	transport := New(Config{Token: "secret", AgentID: "agent"}, []Tool{{Name: "create_channel", Description: "Create", InputSchema: map[string]any{"type": "object"}}}, call)
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/mcp", transport.ServeSSE)
-	mux.HandleFunc("POST /api/v1/mcp/message", transport.ServeMessage)
-	server := httptest.NewServer(mux)
-	req, _ := http.NewRequest("GET", server.URL+"/api/v1/mcp", nil)
-	addHeaders(req, identity)
-	response, err := server.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != 200 {
-		t.Fatalf("GET status %d", response.StatusCode)
-	}
-	c := &client{t: t, server: server, response: response, reader: bufio.NewReader(response.Body), identity: identity}
-	event, data := c.read()
-	if event != "endpoint" {
-		t.Fatalf("first event %q", event)
-	}
-	c.endpoint = data
-	t.Cleanup(func() { response.Body.Close(); server.Close() })
-	return c
+	server := httptest.NewServer(transport)
+	t.Cleanup(server.Close)
+	return &client{t: t, server: server, transport: transport, endpoint: "/api/v1/mcp", identity: identity}
 }
 func addHeaders(req *http.Request, identity Identity) {
 	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("X-Linx-Device-Id", identity.DeviceID)
 	req.Header.Set("X-Linx-Agent-Id", identity.AgentID)
 	req.Header.Set("X-Linx-Session-Id", identity.SessionID)
 }
-func (c *client) read() (string, string) {
-	c.t.Helper()
-	type result struct {
-		event, data string
-		err         error
-	}
-	done := make(chan result, 1)
-	go func() {
-		var event, data string
-		for {
-			line, err := c.reader.ReadString('\n')
-			if err != nil {
-				done <- result{err: err}
-				return
-			}
-			line = strings.TrimSuffix(line, "\n")
-			if line == "" && event != "" {
-				done <- result{event: event, data: data}
-				return
-			}
-			if strings.HasPrefix(line, "event: ") {
-				event = strings.TrimPrefix(line, "event: ")
-			}
-			if strings.HasPrefix(line, "data: ") {
-				data = strings.TrimPrefix(line, "data: ")
-			}
-		}
-	}()
-	select {
-	case r := <-done:
-		if r.err != nil {
-			c.t.Fatal(r.err)
-		}
-		return r.event, r.data
-	case <-time.After(3 * time.Second):
-		c.t.Fatal("SSE response timed out")
-		return "", ""
-	}
-}
-func (c *client) post(body string, identity Identity) int {
-	c.t.Helper()
-	req, _ := http.NewRequest("POST", c.server.URL+c.endpoint, strings.NewReader(body))
+func (c *client) request(method, body string, identity Identity) *http.Request {
+	req, _ := http.NewRequest(method, c.server.URL+c.endpoint, strings.NewReader(body))
 	addHeaders(req, identity)
+	if c.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	return req
+}
+func (c *client) send(req *http.Request) (int, []byte, http.Header) {
+	c.t.Helper()
 	response, err := c.server.Client().Do(req)
 	if err != nil {
 		c.t.Fatal(err)
 	}
 	defer response.Body.Close()
-	io.Copy(io.Discard, response.Body)
-	return response.StatusCode
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return response.StatusCode, body, response.Header
+}
+func (c *client) post(body string, identity Identity) int {
+	status, _, _ := c.send(c.request("POST", body, identity))
+	return status
 }
 func (c *client) rpc(body string) map[string]any {
 	c.t.Helper()
-	if status := c.post(body, c.identity); status != 202 {
-		c.t.Fatalf("POST status %d", status)
+	status, data, headers := c.send(c.request("POST", body, c.identity))
+	if status != 200 {
+		c.t.Fatalf("POST status %d: %s", status, data)
 	}
-	event, data := c.read()
-	if event != "message" {
-		c.t.Fatalf("event %q", event)
+	if headers.Get("Content-Type") != "application/json" {
+		c.t.Fatal(headers)
+	}
+	if id := headers.Get("Mcp-Session-Id"); id != "" {
+		c.sessionID = id
 	}
 	var reply map[string]any
-	if err := json.Unmarshal([]byte(data), &reply); err != nil {
+	if err := json.Unmarshal(data, &reply); err != nil {
 		c.t.Fatal(err)
 	}
 	return reply
 }
 func (c *client) initialize() {
 	c.t.Helper()
-	reply := c.rpc(`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`)
-	if reply["error"] != nil {
+	reply := c.rpc(`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`)
+	if reply["error"] != nil || c.sessionID == "" {
 		c.t.Fatalf("initialize: %v", reply)
+	}
+	if reply["result"].(map[string]any)["protocolVersion"] != latestProtocol {
+		c.t.Fatal(reply)
 	}
 	if status := c.post(`{"jsonrpc":"2.0","method":"notifications/initialized"}`, c.identity); status != 202 {
 		c.t.Fatal(status)
@@ -186,7 +149,7 @@ func TestTransportIdentityAndAuthentication(t *testing.T) {
 		t.Fatal(status)
 	}
 	for _, identity := range []Identity{{"mac", "wrong", "voice"}, {"mac", "agent", ""}} {
-		req, _ := http.NewRequest("GET", c.server.URL+"/api/v1/mcp", nil)
+		req, _ := http.NewRequest("POST", c.server.URL+"/api/v1/mcp", nil)
 		addHeaders(req, identity)
 		response, err := c.server.Client().Do(req)
 		if err != nil {
@@ -203,36 +166,59 @@ func TestDiscoveryCannotCallTools(t *testing.T) {
 		t.Error("unexpected call")
 		return ToolResult{}, nil
 	})
-	errorCode(t, c.rpc(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`), -32000)
+	if status := c.post(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, c.identity); status != 400 {
+		t.Fatal(status)
+	}
 	c.initialize()
 	if list := c.rpc(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); list["error"] != nil {
 		t.Fatal(list)
 	}
 	errorCode(t, c.rpc(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_channel"}}`), -32001)
-	errorCode(t, c.rpc(`not json`), -32700)
-	errorCode(t, c.rpc(`{"jsonrpc":"2.0","id":{},"method":"ping"}`), -32600)
+	for _, body := range []string{`not json`, `{"jsonrpc":"2.0","id":{},"method":"ping"}`, `[]`, `null`} {
+		if status := c.post(body, c.identity); status != 400 {
+			t.Fatal(status)
+		}
+	}
 }
-func TestDisconnectCancelsTool(t *testing.T) {
-	started := make(chan struct{})
-	cancelled := make(chan struct{})
+func TestDisconnectDoesNotCancelTool(t *testing.T) {
+	started, finish := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
 	c := start(t, Identity{"mac", "agent", "voice"}, func(ctx context.Context, _ Identity, _ string, _ json.RawMessage) (ToolResult, error) {
+		calls.Add(1)
 		close(started)
-		<-ctx.Done()
-		close(cancelled)
-		return ToolResult{}, ctx.Err()
+		select {
+		case <-finish:
+			return ToolResult{}, nil
+		case <-ctx.Done():
+			t.Error("disconnect cancelled tool")
+			return ToolResult{}, ctx.Err()
+		}
 	})
 	c.initialize()
-	c.post(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_channel"}}`, c.identity)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_channel"}}`
+	ctx, cancel := context.WithCancel(context.Background())
+	req := c.request("POST", body, c.identity).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		response, _ := c.server.Client().Do(req)
+		if response != nil {
+			response.Body.Close()
+		}
+	}()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
 		t.Fatal("tool not started")
 	}
-	c.response.Body.Close()
-	select {
-	case <-cancelled:
-	case <-time.After(time.Second):
-		t.Fatal("tool context not cancelled")
+	cancel()
+	<-done
+	close(finish)
+	if reply := c.rpc(body); reply["error"] != nil {
+		t.Fatal(reply)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("retry repeated mutation")
 	}
 }
 func TestSessionRequestBudgetDoesNotEvictCalls(t *testing.T) {
@@ -257,25 +243,159 @@ func TestSessionRequestBudgetDoesNotEvictCalls(t *testing.T) {
 	}
 }
 
-func TestToolCancellationNotification(t *testing.T) {
-	started := make(chan struct{})
-	c := start(t, Identity{"mac", "agent", "voice"}, func(ctx context.Context, _ Identity, _ string, _ json.RawMessage) (ToolResult, error) {
-		close(started)
-		<-ctx.Done()
-		return ToolResult{}, ctx.Err()
+func TestToolCancellationAndDelete(t *testing.T) {
+	for _, action := range []string{"notification", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			started := make(chan struct{})
+			c := start(t, Identity{"mac", "agent", "voice"}, func(ctx context.Context, _ Identity, _ string, _ json.RawMessage) (ToolResult, error) {
+				close(started)
+				<-ctx.Done()
+				return ToolResult{}, ctx.Err()
+			})
+			c.initialize()
+			done := make(chan map[string]any, 1)
+			go func() {
+				done <- c.rpc(`{"jsonrpc":"2.0","id":"cancel-me","method":"tools/call","params":{"name":"create_channel","arguments":{},"_meta":{"progressToken":"p"}}}`)
+			}()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("tool not started")
+			}
+			if action == "notification" {
+				if status := c.post(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"cancel-me"}}`, c.identity); status != 202 {
+					t.Fatal(status)
+				}
+			} else {
+				status, _, _ := c.send(c.request("DELETE", "", c.identity))
+				if status != 204 {
+					t.Fatal(status)
+				}
+				if status := c.post(`{"jsonrpc":"2.0","id":4,"method":"ping"}`, c.identity); status != 404 {
+					t.Fatal(status)
+				}
+			}
+			select {
+			case reply := <-done:
+				errorCode(t, reply, -32800)
+			case <-time.After(time.Second):
+				t.Fatal("cancellation blocked")
+			}
+		})
+	}
+}
+
+func TestHTTPContract(t *testing.T) {
+	c := start(t, Identity{}, nil)
+	c.initialize()
+	for _, tc := range []struct {
+		name, method, header, value string
+		status                      int
+	}{
+		{"GET", "GET", "", "", 405},
+		{"missing bearer", "POST", "Authorization", "", 401},
+		{"browser origin", "POST", "Origin", "https://evil.example", 403},
+		{"content type", "POST", "Content-Type", "text/plain", 415},
+		{"accept", "POST", "Accept", "application/json", 406},
+		{"unknown version", "POST", "MCP-Protocol-Version", "2099-01-01", 400},
+		{"older version", "POST", "MCP-Protocol-Version", "2025-03-26", 400},
+		{"unknown session", "POST", "Mcp-Session-Id", "missing", 404},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := c.request(tc.method, `{"jsonrpc":"2.0","id":1,"method":"ping"}`, c.identity)
+			if tc.header != "" {
+				req.Header.Set(tc.header, tc.value)
+			}
+			status, _, _ := c.send(req)
+			if status != tc.status {
+				t.Fatalf("got %d want %d", status, tc.status)
+			}
+		})
+	}
+}
+
+func TestNegotiationAndSessionExpiry(t *testing.T) {
+	for _, version := range []string{"2025-06-18", "2025-03-26", "2024-11-05"} {
+		t.Run(version, func(t *testing.T) {
+			c := start(t, Identity{}, nil)
+			reply := c.rpc(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + version + `"}}`)
+			if reply["result"].(map[string]any)["protocolVersion"] != latestProtocol {
+				t.Fatal(reply)
+			}
+			c.transport.mu.Lock()
+			conn := c.transport.sessions[c.sessionID]
+			conn.lastUsed = time.Now().Add(-sessionTTL)
+			c.transport.mu.Unlock()
+			if status := c.post(`{"jsonrpc":"2.0","id":2,"method":"ping"}`, c.identity); status != 404 {
+				t.Fatal(status)
+			}
+			if conn.ctx.Err() == nil {
+				t.Fatal("expired session context remains active")
+			}
+			c.sessionID = ""
+			c.initialize()
+		})
+	}
+}
+
+func TestConcurrentReplayRunsToolOnce(t *testing.T) {
+	started, finish := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	c := start(t, Identity{"mac", "agent", "voice"}, func(context.Context, Identity, string, json.RawMessage) (ToolResult, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		<-finish
+		return ToolResult{Content: []Content{{Type: "text", Text: "done"}}}, nil
 	})
 	c.initialize()
-	c.post(`{"jsonrpc":"2.0","id":"cancel-me","method":"tools/call","params":{"name":"create_channel","arguments": {},"_meta":{"progressToken":"p"}}}`, c.identity)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_channel"}}`
+	results := make(chan map[string]any, 2)
+	go func() { results <- c.rpc(body) }()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
 		t.Fatal("tool not started")
 	}
-	c.post(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"cancel-me","reason":"user cancelled"}}`, c.identity)
-	_, data := c.read()
-	var reply map[string]any
-	if err := json.Unmarshal([]byte(data), &reply); err != nil {
-		t.Fatal(err)
+	go func() { results <- c.rpc(body) }()
+	close(finish)
+	for i := 0; i < 2; i++ {
+		select {
+		case reply := <-results:
+			if reply["error"] != nil {
+				t.Fatal(reply)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("replay blocked")
+		}
 	}
-	errorCode(t, reply, -32800)
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent replay executed %d times", calls.Load())
+	}
+}
+
+func TestSessionCapacityAndMalformedInitialize(t *testing.T) {
+	c := start(t, Identity{}, nil)
+	bad := `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}`
+	errorCode(t, c.rpc(bad), -32602)
+	if c.sessionID != "" || len(c.transport.sessions) != 0 {
+		t.Fatal("invalid initialize allocated a session")
+	}
+	for i := 0; i < maxSessions; i++ {
+		c.sessionID = ""
+		c.initialize()
+	}
+	lastID := c.sessionID
+	c.sessionID = ""
+	body := `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`
+	if status := c.post(body, c.identity); status != 503 {
+		t.Fatalf("capacity status %d", status)
+	}
+	c.sessionID = lastID
+	status, _, _ := c.send(c.request("DELETE", "", c.identity))
+	if status != 204 {
+		t.Fatal(status)
+	}
+	c.sessionID = ""
+	c.initialize()
 }

@@ -1,6 +1,6 @@
 # 灵矽接入方案：小路语音对讲机
 
-本文件定义 3D 模拟设备和真实硬件的统一灵矽接入方式。依据官方 [云端 MCP](https://linx.qiniu.com/docs/xrobot/mcp/software-mcp)、[MCP 服务管理](https://linx.qiniu.com/docs/xrobot/guide/mcp-store)、[WebSocket 协议](https://linx.qiniu.com/docs/xrobot/platform/websocket) 和 [OTA](https://linx.qiniu.com/docs/xrobot/platform/OTA) 文档。真实密钥只保存在本地或部署环境。
+本文件定义 3D 模拟设备和真实硬件的统一灵矽接入方式。依据官方 [云端 MCP](https://linx.qiniu.com/docs/xrobot/mcp/software-mcp)、[MCP 服务管理](https://linx.qiniu.com/docs/xrobot/guide/mcp-store)、[WebSocket 协议](https://linx.qiniu.com/docs/xrobot/platform/websocket)、[OTA](https://linx.qiniu.com/docs/xrobot/platform/OTA) 及 [MCP Streamable HTTP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 文档。真实密钥只保存在本地或部署环境。
 
 ## 1. 职责与链路
 
@@ -55,11 +55,13 @@ flowchart LR
 
 ### 4.1 连接
 
-- `GET /api/v1/mcp`：建立 SSE，接收 `endpoint` 事件。
-- `POST /api/v1/mcp/message?session_id=...`：向 `endpoint` 指定地址提交 JSON-RPC 2.0 请求，响应经 SSE 的 `message` 事件返回。
-- 支持初始化、初始化通知、`ping`、`tools/list`、`tools/call`。
+- 初始化、通知、`ping`、`tools/list` 和 `tools/call` 统一发送到 `POST /api/v1/mcp`，正文为 JSON-RPC 2.0，`Content-Type: application/json`，`Accept: application/json, text/event-stream`。
+- 服务对请求返回 HTTP 200 与 `application/json` 格式的 JSON-RPC 结果；成功接收通知后返回 HTTP 202 空响应。
+- 协商使用 `2025-06-18` 协议版本，客户端按 `initialize` 结果使用对应版本。
+- `initialize` 响应通过 `Mcp-Session-Id` 头分配会话。客户端后续请求携带该会话头及协商的 `MCP-Protocol-Version`，先发送 `notifications/initialized` 再调用工具。
+- `DELETE /api/v1/mcp` 携带相同会话与鉴权头结束会话。服务不提供独立推送流，GET 返回 HTTP 405，属于 Streamable HTTP 允许的行为。
 - 所有请求携带 `Authorization: Bearer <LINX_MCP_TOKEN>`；凭证缺失或未配置时拒绝访问。
-- 反向代理必须保持 SSE 长连接并关闭响应缓冲，同时转发消息路径；只暴露 GET 路径无法完成调用。
+- 反向代理必须转发 POST/DELETE，以及 Bearer、MCP 会话/协议和平台身份头；保留初始化响应的 `Mcp-Session-Id`。
 
 ### 4.2 平台身份
 
@@ -71,9 +73,11 @@ flowchart LR
 | `X-Linx-Agent-Id` | 必须等于配置的 `LINX_AGENT_ID` |
 | `X-Linx-Session-Id` | 必须存在，用于关联灵矽会话 |
 
-SSE 连接与后续 POST 消息必须携带一致的身份头。这些信息来自已鉴权的平台请求，不是工具参数。模型不能通过参数切换目标设备。控制台发现工具时可以不带设备上下文，允许初始化和 `tools/list`，但调用业务工具必须有完整且匹配的设备、智能体和会话身份。使用实际设备会话完成业务联调，不能把控制台工具发现成功当作设备调用成功。
+初始化与该 MCP 会话的后续请求必须携带一致的身份头。这些信息来自已鉴权的平台请求，不是工具参数。模型不能通过参数切换目标设备。控制台发现工具时可以不带设备上下文，允许初始化和 `tools/list`，但调用业务工具必须有完整且匹配的设备、智能体和会话身份。使用实际设备会话完成业务联调，不能把控制台工具发现成功当作设备调用成功。
 
-MCP 传输 `session_id` 用于路由 SSE 连接，灵矽会话 ID 用于关联对话，JSON-RPC `id` 用于识别请求，设备 `action_id` 用于动作回执。它们不能互相替代。同一 SSE 连接内相同请求 ID 的重试复用结果，不能用同一 ID 提交不同请求；跨连接或进程重启不承诺业务幂等。每个连接最多记录 1024 个请求，达到上限需重新建立连接；工具调用串行执行。断开 SSE 或取消正在执行的请求会取消等待，但不回滚已经落库的业务结果。
+`Mcp-Session-Id` 标识 MCP 传输会话，灵矽会话 ID 用于关联对话，JSON-RPC `id` 用于识别请求，设备 `action_id` 用于动作回执。它们不能互相替代。同一 MCP 会话内相同请求 ID 的重试复用结果，不能用同一 ID 提交不同请求；跨 MCP 会话或进程重启不承诺业务幂等。服务最多保留 128 个活动会话；会话空闲 30 分钟后失效，每个会话最多记录 1024 个请求，达到请求上限需重新初始化。会话失效返回 HTTP 404，客户端需重新初始化，不能将重新初始化后的业务调用视为已去重。
+
+同一 MCP 会话内工具调用串行执行，最长执行 30 秒。POST 连接断开不会取消已经接受的调用，客户端可在原 MCP 会话内用相同 JSON-RPC ID 重试并获取结果；`notifications/cancelled` 或删除 MCP 会话会取消执行等待，但不回滚已经落库的业务结果。
 
 ### 4.3 工具
 
@@ -101,24 +105,22 @@ MCP 传输 `session_id` 用于路由 SSE 连接，灵矽会话 ID 用于关联�
 ## 5. 配置灵矽智能体与本地隧道
 
 1. 在 `.env` 填写 `SESSION_SECRET`、RTN 凭证、`LINX_API_KEY`、`LINX_AGENT_ID`。生成独立随机值作为 `LINX_MCP_TOKEN`，勿把 API Key 当作 MCP Token。
-2. 启动本地服务，将 HTTPS 公网隧道指向 Go 服务（默认本地 8080 端口）。把隧道基址填入 `PUBLIC_BASE_URL`。隧道须支持 SSE、POST 消息和 WebSocket；更换临时域名后同步更新配置。
-3. 在灵矽控制台的“自定义 MCP”创建私有服务，选择 SSE，地址填写 `https://<隧道域名>/api/v1/mcp`，请求头设置 `Authorization: Bearer <LINX_MCP_TOKEN>`。只填写 SSE 入口，消息地址由服务端的 `endpoint` 事件提供。
+2. 启动本地服务，将 HTTPS 公网隧道指向 Go 服务（默认本地 8080 端口）。把隧道基址填入 `PUBLIC_BASE_URL`。隧道须支持 MCP 的 POST/DELETE 及 WebSocket。可使用 ngrok 账号分配的固定开发域名，重启时继续指定同一域名；若使用临时域名，更换后须同步更新配置。
+3. 在灵矽控制台的“自定义 MCP”创建私有服务，协议选择 **Streamable HTTP**，地址填写 `https://<隧道域名>/api/v1/mcp`，请求头设置 `Authorization: Bearer <LINX_MCP_TOKEN>`。初始化与工具调用共用该地址。
 4. 将该 MCP 开通并关联到“小路”智能体的技能/扩展，保留智能体模型用于语义理解。确认它能发现工具列表。官方 API 也可创建服务、订阅并配置智能体 MCP 关联，操作关联列表时需保留其他已选择 MCP。
 5. 在角色指令中要求：频道/对讲/设备操作必须调用业务工具；根据工具结果回答；缺参数先追问；需要确认时先复述，用户明确确认后才调用 `confirm_action`；不得猜测设备身份、成功状态或频道口令。
 6. 用 3D 原型开机完成自动绑定与昵称设置，建立业务及语音连接，按指令键开始真实音频测试。
 
-官方 SSE 配置结构示例（凭证使用部署时的真实值，不提交到 Git）：
+控制台配置项：
 
-```json
-{
-  "type": "sse",
-  "sse": {
-    "type": 0,
-    "url": "https://<隧道域名>/api/v1/mcp",
-    "header": { "Authorization": "Bearer <LINX_MCP_TOKEN>" }
-  }
-}
-```
+| 配置项 | 值 |
+| --- | --- |
+| 传输协议 | `Streamable HTTP` |
+| URL | `https://<隧道域名>/api/v1/mcp` |
+| 请求头名称 | `Authorization` |
+| 请求头值 | `Bearer <LINX_MCP_TOKEN>` |
+
+不要在控制台固定填写 `Mcp-Session-Id` 或设备身份头：MCP 会话由初始化返回，设备身份由灵矽在实际设备会话中提供。凭证使用部署时的真实值，不提交到 Git。
 
 ## 6. 真实联调与验收边界
 

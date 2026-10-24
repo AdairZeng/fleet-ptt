@@ -38,8 +38,7 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("GET /api/v1/device/ws", hub.ServeHTTP)
 	mux.Handle("GET /api/v1/linx/ws", linxbridge.Handler{Users: users, Bridge: bridge})
 	mcp := newLinxMCP(users, channels, hub, linxToken, agentID)
-	mux.HandleFunc("GET /api/v1/mcp", mcp.ServeSSE)
-	mux.HandleFunc("POST /api/v1/mcp/message", mcp.ServeMessage)
+	mux.Handle("/api/v1/mcp", mcp)
 }
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。

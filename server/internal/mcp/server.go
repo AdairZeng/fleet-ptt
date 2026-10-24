@@ -1,4 +1,4 @@
-// Package mcp serves the MCP 2024-11-05 HTTP+SSE transport used by Linx.
+// Package mcp serves the MCP Streamable HTTP transport used by Linx.
 package mcp
 
 import (
@@ -9,19 +9,22 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	maxSessions  = 128
-	maxBodyBytes = 64 << 10
-	maxRequests  = 1024
-	queueSize    = 32
+	maxSessions    = 128
+	maxBodyBytes   = 64 << 10
+	maxRequests    = 1024
+	sessionTTL     = 30 * time.Minute
+	toolTimeout    = 30 * time.Second
+	latestProtocol = "2025-06-18"
 )
 
 type Config struct{ Token, AgentID string }
@@ -47,12 +50,15 @@ type Server struct {
 	call     Call
 	mu       sync.Mutex
 	sessions map[string]*session
+	now      func() time.Time
 }
 type session struct {
 	identity     Identity
+	protocol     string
 	ctx          context.Context
-	requests     chan request
-	events       chan []byte
+	cancel       context.CancelFunc
+	lastUsed     time.Time // guarded by Server.mu
+	lock         chan struct{}
 	initialized  bool
 	cached       map[string]cachedReply
 	activeMu     sync.Mutex
@@ -68,7 +74,6 @@ type request struct {
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
-	invalid bool
 }
 type rpcError struct {
 	Code    int    `json:"code"`
@@ -85,7 +90,7 @@ func New(config Config, tools []Tool, call Call) *Server {
 	if tools == nil {
 		tools = []Tool{}
 	}
-	return &Server{config: config, tools: tools, call: call, sessions: make(map[string]*session)}
+	return &Server{config: config, tools: tools, call: call, sessions: make(map[string]*session), now: time.Now}
 }
 
 func identityFrom(r *http.Request) Identity {
@@ -104,10 +109,20 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// ServeSSE opens a transport session. Identity is trusted only from authenticated
-// Linx headers; tools cannot select a different device through their arguments.
-func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP serves a single Streamable HTTP endpoint. Responses use JSON;
+// server-initiated streams are not needed because device events use their own WS.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r) {
+		return
+	}
+	// Only the authenticated Linx server calls this endpoint, never a browser.
+	if _, present := r.Header["Origin"]; present {
+		http.Error(w, "browser origins are not allowed", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "POST, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	identity := identityFrom(r)
@@ -115,78 +130,62 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid Linx identity", http.StatusForbidden)
 		return
 	}
-	if _, ok := w.(http.Flusher); !ok {
-		http.Error(w, "streaming unavailable", http.StatusInternalServerError)
+	version := r.Header.Get("MCP-Protocol-Version")
+	if version != "" && !supportedProtocol(version) {
+		http.Error(w, "unsupported protocol version", http.StatusBadRequest)
 		return
 	}
-	random := make([]byte, 32)
-	if _, err := rand.Read(random); err != nil {
-		http.Error(w, "session unavailable", 500)
-		return
-	}
-	id := base64.RawURLEncoding.EncodeToString(random)
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	conn := &session{identity: identity, ctx: ctx, requests: make(chan request, queueSize), events: make(chan []byte, queueSize), cached: make(map[string]cachedReply)}
+	id := r.Header.Get("Mcp-Session-Id")
+	var conn *session
 	s.mu.Lock()
-	if len(s.sessions) >= maxSessions {
-		s.mu.Unlock()
-		http.Error(w, "too many sessions", http.StatusServiceUnavailable)
-		return
-	}
-	s.sessions[id] = conn
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.sessions, id); s.mu.Unlock() }()
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	controller := http.NewResponseController(w)
-	write := func(event string, data []byte) error {
-		_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
-			return err
-		}
-		return controller.Flush()
-	}
-	if err := write("endpoint", []byte("/api/v1/mcp/message?session_id="+id)); err != nil {
-		return
-	}
-	go s.serve(conn)
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event := <-conn.events:
-			if err := write("message", event); err != nil {
-				return
-			}
-		case <-ticker.C:
-			_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
-				return
-			}
-			if err := controller.Flush(); err != nil {
-				return
-			}
+	// debt: bounded O(maxSessions) idle cleanup; use an expiry heap if the
+	// deployment outgrows the 128-session local testing limit.
+	for key, candidate := range s.sessions {
+		if s.now().Sub(candidate.lastUsed) >= sessionTTL {
+			candidate.cancel()
+			delete(s.sessions, key)
 		}
 	}
-}
-
-func (s *Server) ServeMessage(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
+	if id != "" {
+		conn = s.sessions[id]
+		if conn != nil && conn.identity == identity {
+			conn.lastUsed = s.now()
+		}
 	}
-	s.mu.Lock()
-	conn := s.sessions[r.URL.Query().Get("session_id")]
 	s.mu.Unlock()
-	if conn == nil {
+	if id != "" && conn == nil {
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
 	}
-	if identityFrom(r) != conn.identity {
+	if conn != nil && identity != conn.identity {
 		http.Error(w, "Linx identity does not match session", http.StatusForbidden)
+		return
+	}
+	// With a session, the negotiated version is known even if the header is
+	// omitted. Without a session, the initial request negotiates its version.
+	if conn != nil && version != "" && version != conn.protocol {
+		http.Error(w, "protocol version does not match session", http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		if conn == nil {
+			http.Error(w, "session ID required", http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		delete(s.sessions, id)
+		s.mu.Unlock()
+		conn.cancel()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
+	if !accepts(r.Header.Get("Accept"), "application/json") || !accepts(r.Header.Get("Accept"), "text/event-stream") {
+		http.Error(w, "Accept must include application/json and text/event-stream", http.StatusNotAcceptable)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
@@ -196,55 +195,111 @@ func (s *Server) ServeMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	var req request
 	if !json.Valid(body) {
-		req.invalid = true
-	} else if json.Unmarshal(body, &req) != nil {
-		req = request{}
+		writeReply(w, http.StatusBadRequest, encodeReply(nil, nil, &rpcError{-32700, "Parse error"}))
+		return
 	}
-	if req.JSONRPC == "2.0" && len(req.ID) == 0 && req.Method == "notifications/cancelled" {
-		var params struct {
-			RequestID json.RawMessage `json:"requestId"`
+	if json.Unmarshal(body, &req) != nil || req.JSONRPC != "2.0" || req.Method == "" || !validID(req.ID) {
+		writeReply(w, http.StatusBadRequest, encodeReply(nil, nil, &rpcError{-32600, "Invalid Request"}))
+		return
+	}
+	if conn == nil {
+		if req.Method != "initialize" || len(req.ID) == 0 {
+			http.Error(w, "session ID required", http.StatusBadRequest)
+			return
 		}
-		if json.Unmarshal(req.Params, &params) == nil && len(params.RequestID) > 0 && validID(params.RequestID) {
-			conn.activeMu.Lock()
-			if conn.activeID == string(params.RequestID) && conn.activeCancel != nil {
-				conn.activeCancel()
+		var params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if json.Unmarshal(req.Params, &params) != nil || params.ProtocolVersion == "" {
+			writeReply(w, http.StatusOK, encodeReply(req.ID, nil, &rpcError{-32602, "Invalid initialize parameters"}))
+			return
+		}
+		protocol := params.ProtocolVersion
+		if !supportedProtocol(protocol) {
+			protocol = latestProtocol
+		}
+		random := make([]byte, 32)
+		if _, err := rand.Read(random); err != nil {
+			http.Error(w, "session unavailable", http.StatusInternalServerError)
+			return
+		}
+		id = base64.RawURLEncoding.EncodeToString(random)
+		ctx, cancel := context.WithCancel(context.Background())
+		conn = &session{identity: identity, protocol: protocol, ctx: ctx, cancel: cancel, lastUsed: s.now(), lock: make(chan struct{}, 1), cached: make(map[string]cachedReply)}
+		// Initialize before publishing so parallel requests cannot observe a
+		// partially initialized transport session.
+		data := s.handle(conn, req)
+		s.mu.Lock()
+		if len(s.sessions) >= maxSessions {
+			s.mu.Unlock()
+			cancel()
+			http.Error(w, "too many sessions", http.StatusServiceUnavailable)
+			return
+		}
+		s.sessions[id] = conn
+		s.mu.Unlock()
+		w.Header().Set("Mcp-Session-Id", id)
+		writeReply(w, http.StatusOK, data)
+		return
+	}
+	if len(req.ID) == 0 {
+		if req.Method == "notifications/cancelled" {
+			var params struct {
+				RequestID json.RawMessage `json:"requestId"`
 			}
-			conn.activeMu.Unlock()
+			if json.Unmarshal(req.Params, &params) == nil && len(params.RequestID) > 0 && validID(params.RequestID) {
+				conn.activeMu.Lock()
+				if conn.activeID == string(params.RequestID) && conn.activeCancel != nil {
+					conn.activeCancel()
+				}
+				conn.activeMu.Unlock()
+			}
 		}
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	select {
+	case conn.lock <- struct{}{}:
+		defer func() { <-conn.lock }()
 	case <-conn.ctx.Done():
-		http.Error(w, "session closed", http.StatusGone)
-	case conn.requests <- req:
-		w.WriteHeader(http.StatusAccepted)
-	default:
-		http.Error(w, "session queue full", http.StatusTooManyRequests)
+		http.Error(w, "session closed", http.StatusNotFound)
+		return
+	case <-r.Context().Done():
+		return
 	}
+	if conn.ctx.Err() != nil {
+		http.Error(w, "session closed", http.StatusNotFound)
+		return
+	}
+	// A lost HTTP response does not mean the operation was cancelled. Finish
+	// within toolTimeout and cache its reply so retrying the ID is safe.
+	writeReply(w, http.StatusOK, s.handle(conn, req))
 }
-
-func (s *Server) serve(conn *session) {
-	for {
-		select {
-		case <-conn.ctx.Done():
-			return
-		case req := <-conn.requests:
-			if conn.ctx.Err() != nil {
-				return
+func supportedProtocol(version string) bool {
+	return version == latestProtocol
+}
+func accepts(header, media string) bool {
+	for _, value := range strings.Split(header, ",") {
+		kind, params, err := mime.ParseMediaType(strings.TrimSpace(value))
+		if err == nil && kind == media {
+			if q, exists := params["q"]; exists {
+				quality, err := strconv.ParseFloat(q, 64)
+				if err != nil || quality <= 0 || quality > 1 {
+					continue
+				}
 			}
-			data := s.handle(conn, req)
-			if data == nil {
-				continue
-			}
-			select {
-			case conn.events <- data:
-			case <-conn.ctx.Done():
-				return
-			}
+			return true
 		}
 	}
+	return false
 }
+func writeReply(w http.ResponseWriter, status int, data []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
+}
+
 func encodeReply(id json.RawMessage, result any, err *rpcError) []byte {
 	if len(id) == 0 {
 		id = json.RawMessage("null")
@@ -268,19 +323,6 @@ func validID(id json.RawMessage) bool {
 	}
 }
 func (s *Server) handle(conn *session, req request) []byte {
-	if req.invalid {
-		return encodeReply(nil, nil, &rpcError{-32700, "Parse error"})
-	}
-	if req.JSONRPC != "2.0" || req.Method == "" || !validID(req.ID) {
-		id := req.ID
-		if !validID(id) {
-			id = nil
-		}
-		return encodeReply(id, nil, &rpcError{-32600, "Invalid Request"})
-	}
-	if len(req.ID) == 0 {
-		return nil
-	} // Includes notifications/initialized; notifications never receive replies.
 	compact := bytes.NewBuffer(nil)
 	_ = json.Compact(compact, req.Params)
 	hash := sha256.Sum256(append([]byte(req.Method+"\x00"), compact.Bytes()...))
@@ -303,6 +345,9 @@ func (s *Server) handle(conn *session, req request) []byte {
 }
 func (s *Server) dispatch(conn *session, req request) (any, *rpcError) {
 	if req.Method == "initialize" {
+		if conn.initialized {
+			return nil, &rpcError{-32600, "Session is already initialized"}
+		}
 		var params struct {
 			ProtocolVersion string          `json:"protocolVersion"`
 			Capabilities    json.RawMessage `json:"capabilities"`
@@ -312,7 +357,7 @@ func (s *Server) dispatch(conn *session, req request) (any, *rpcError) {
 			return nil, &rpcError{-32602, "Invalid initialize parameters"}
 		}
 		conn.initialized = true
-		return map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]string{"name": "fleet-ptt", "version": "1.0.0"}}, nil
+		return map[string]any{"protocolVersion": conn.protocol, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]string{"name": "fleet-ptt", "version": "1.0.0"}}, nil
 	}
 	if req.Method == "ping" {
 		return map[string]any{}, nil
@@ -354,7 +399,7 @@ func (s *Server) dispatch(conn *session, req request) (any, *rpcError) {
 		if len(params.Arguments) == 0 || params.Arguments[0] != '{' {
 			return nil, &rpcError{-32602, "Tool arguments must be an object"}
 		}
-		ctx, cancel := context.WithCancel(conn.ctx)
+		ctx, cancel := context.WithTimeout(conn.ctx, toolTimeout)
 		conn.activeMu.Lock()
 		conn.activeID, conn.activeCancel = string(req.ID), cancel
 		conn.activeMu.Unlock()

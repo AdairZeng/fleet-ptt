@@ -201,8 +201,8 @@ sequenceDiagram
 | GET | `/api/v1/channels/{id}/rtn-token` | 为成员签发 RoomToken |
 | POST | `/api/v1/talk/start` | 请求开始上行 |
 | POST | `/api/v1/talk/end` | 请求结束上行 |
-| GET | `/api/v1/mcp` | 灵矽云端 MCP SSE 连接 |
-| POST | `/api/v1/mcp/message` | MCP JSON-RPC 消息；使用 SSE 返回的 session_id |
+| POST | `/api/v1/mcp` | Streamable HTTP：初始化、通知和 MCP JSON-RPC 请求 |
+| DELETE | `/api/v1/mcp` | 结束 `Mcp-Session-Id` 指定的 MCP 会话 |
 | POST | `/api/v1/device/boot` | 设备开机认证并按 mac_id 检查/完成灵矽绑定 |
 | GET | `/api/v1/linx/ws` | 设备到真实灵矽设备 WebSocket 的服务端桥接 |
 
@@ -245,19 +245,19 @@ sequenceDiagram
 
 ### 8.3 灵矽云端 MCP
 
-灵矽智能体负责语义理解和工具选择；Go 只接收结构化业务调用，执行身份校验、参数校验、权限判断、确认和设备动作。传输使用 JSON-RPC 2.0 与 SSE：`GET /api/v1/mcp` 建立连接并返回 `endpoint` 事件，灵矽向该事件提供的 `/api/v1/mcp/message?session_id=...` 提交请求，响应通过 SSE `message` 事件返回。支持 `initialize`、初始化通知、`ping`、`tools/list` 和 `tools/call`。
+灵矽智能体负责语义理解和工具选择；Go 只接收结构化业务调用，执行身份校验、参数校验、权限判断、确认和设备动作。传输使用 JSON-RPC 2.0 与 Streamable HTTP：初始化、通知和工具请求统一发送到 `POST /api/v1/mcp`，请求返回 `application/json`，通知成功返回 HTTP 202 空响应。支持 `initialize`、初始化通知、`ping`、`tools/list` 和 `tools/call`。初始化响应的 `Mcp-Session-Id` 头用于后续请求；后续请求同时发送协商的 `MCP-Protocol-Version`。`DELETE /api/v1/mcp` 结束会话；服务不提供独立推送流，GET 返回 HTTP 405。
 
 所有请求携带 `Authorization: Bearer <LINX_MCP_TOKEN>`。设备调用由灵矽平台附加 `X-Linx-Device-Id`、`X-Linx-Agent-Id` 和 `X-Linx-Session-Id`；设备标识是注册记录中的 `mac_id`，智能体 ID 必须与 `LINX_AGENT_ID` 一致。控制台无设备上下文时可初始化及读取工具目录，不能执行业务工具。设备身份不接受模型参数覆盖。
 
 工具包括 `create_channel`、`join_channel`、`confirm_action`、`cancel_action`、`switch_channel`、`previous_channel`、`talk_start`、`talk_end`、`list_my_channels`、`list_speakers`、`show_join_code`、`show_join_qr`、`set_volume` 和 `set_nickname`。参数以 `tools/list` 的 JSON Schema 为准，完整表见 [灵矽接入方案](./linx-access.md)。结果使用 MCP `content` 文本及 `isError`，灵矽按实际结果播报；需要设备执行的操作沿 `/api/v1/device/ws` 下发并等待回执。
 
-口令入群与昵称修改先生成设备与灵矽会话内的待确认事项，`confirm_action` 消费有效待办，`cancel_action` 清除待办；有效期为两分钟，缺失或过期不得执行；同设备的另一灵矽会话不能确认该待办。同一 SSE 连接内使用 JSON-RPC 请求 ID 识别重试；传输 session_id、灵矽对话 session ID 和设备 action_id 各自独立。跨连接的业务去重需要进一步定义稳定请求标识，当前不承诺持久幂等。
+口令入群与昵称修改先生成设备与灵矽会话内的待确认事项，`confirm_action` 消费有效待办，`cancel_action` 清除待办；有效期为两分钟，缺失或过期不得执行；同设备的另一灵矽会话不能确认该待办。同一 MCP 会话内使用 JSON-RPC 请求 ID 识别重试；`Mcp-Session-Id`、灵矽对话 session ID 和设备 action_id 各自独立。跨 MCP 会话的业务去重需要进一步定义稳定请求标识，当前不承诺持久幂等。
 
 ### 8.4 灵矽音频接入
 
 3D 原型和真实硬件都通过 `/api/v1/linx/ws` 连接项目服务端，服务端根据当前设备的 `mac_id` 获取对应灵矽 WebSocket 凭证。服务端向灵矽发送 PCM `hello`，转发设备的 `listen start/stop` 与 16 kHz 单声道 16 bit 小端 PCM 二进制帧，并将灵矽的 STT、TTS 状态和音频帧转发给设备。客户端不能设置灵矽要求的握手头，也不接触灵矽长期凭证。
 
-灵矽智能体通过云端 MCP 执行业务工具，并根据工具结果生成回答、合成 TTS；音频沿设备 WebSocket 返回。云端 MCP 需要可从公网访问的 SSE 与消息接口，本地联调使用公网隧道。音频桥接使用服务端保存的设备 Token，不向客户端开放灵矽凭证，不启用设备端 MCP 工具发现。
+灵矽智能体通过云端 MCP 执行业务工具，并根据工具结果生成回答、合成 TTS；音频沿设备 WebSocket 返回。云端 MCP 需要可从公网访问的 Streamable HTTP 端点，本地联调使用公网隧道。音频桥接使用服务端保存的设备 Token，不向客户端开放灵矽凭证，不启用设备端 MCP 工具发现。
 
 ## 9. 安全、部署与运行约束
 
@@ -266,7 +266,7 @@ sequenceDiagram
 - 云端 MCP 校验 Bearer token、平台设备/智能体/会话身份、结构化参数和动作权限；模型参数不能指定身份。
 - WebSocket 仅接受有效设备会话，动作按设备定向；频道成员事件按成员关系发送。
 - SQLite 使用单实例 volume，数据需要备份；多实例部署需另行提供共享存储和连接协调。
-- 公网使用 HTTPS，反向代理支持 WebSocket 升级和 SSE 不缓冲；`localhost` 可用于浏览器麦克风开发。
+- 公网使用 HTTPS，反向代理支持 WebSocket 升级，并转发 MCP 的 POST/DELETE、会话、协议与身份请求头；`localhost` 可用于浏览器麦克风开发。
 - 关机、取消、失焦和断线均释放本地资源；恢复连接后重新同步频道，不自动恢复讲话。
 
 ## 10. 实施与验收

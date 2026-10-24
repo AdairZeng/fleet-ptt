@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
@@ -49,10 +50,20 @@ func main() {
 	if base := publicBaseURL(os.Getenv("PUBLIC_BASE_URL")); base != "" {
 		log.Printf("linx chat callback: %s/api/v1/linx/chat", base)
 	}
+	bridgeConfig := linxbridge.Config{
+		URL:      getenv("LINX_WS_URL", linxbridge.DefaultURL),
+		DeviceID: os.Getenv("LINX_DEVICE_ID"),
+		Token:    os.Getenv("LINX_DEVICE_TOKEN"),
+	}
+	provision := linxbridge.ProvisionConfig{
+		APIKey: os.Getenv("LINX_API_KEY"), AgentID: os.Getenv("LINX_AGENT_ID"), DeviceID: os.Getenv("LINX_DEVICE_ID"),
+		APIBaseURL: getenv("LINX_API_BASE_URL", linxbridge.DefaultAPIBaseURL), OTAURL: getenv("LINX_OTA_URL", linxbridge.DefaultOTAURL),
+	}
+	bridge := linxbridge.NewManager(bridgeConfig, provision)
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(staticDir, svc, channels, tokens, linxToken),
+		Handler:           newHandler(staticDir, svc, channels, tokens, linxToken, bridge),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -40,12 +40,12 @@ export type DeviceResources = {
 }
 
 export const initialDeviceSnapshot: DeviceSnapshot = {
-  phase: 'standby',
-  powered: true,
+  phase: 'off',
+  powered: false,
   revision: 0,
-  screen: '待命',
-  indicator: 'blue',
-  sound: 'ready',
+  screen: '已关机',
+  indicator: 'off',
+  sound: 'none',
 }
 
 const allowed: Record<DevicePhase, Partial<Record<DeviceEvent['type'], true>>> = {

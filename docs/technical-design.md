@@ -31,7 +31,7 @@ flowchart TB
   control <--> api[Go业务API与设备信令]
   control <--> audio[音频控制层]
   audio <--> rtc[七牛RTN]
-  audio --> wake[本地唤醒检测]
+  audio --> wake[灵矽云端监听]
   audio <--> bridge[指令接入服务]
   bridge <--> linx[灵矽ASR与TTS]
   linx --> chat[Chat SSE]
@@ -89,9 +89,9 @@ PTT、指令键和语音唤醒共用设备控制层。按键有按压位移、�
 
 ### 5.1 唤醒与连续说法
 
-开机完成授权后，设备在收听频道或未入频道状态本地监听“你好小路”。支持连续说法，例如“你好小路，切到装货”；也支持先唤醒、听到应答后再说内容。补充参数和确认在同一轮上下文内无需重复唤醒。
+开机完成授权后，设备在收听频道或未入频道状态通过灵矽 WebSocket 处理“你好小路”和语音指令。支持连续说法，例如“你好小路，切到装货”；也支持指令键触发后再说内容。补充参数和确认在同一轮上下文内无需重复唤醒。
 
-本地唤醒不向云端持续上传完整待命音频，仅保留连续说法所需的短时内存数据。唤醒、静音、无输入和处理超时由设备控制层统一管理；浏览器后台和锁屏不作为常驻监听承诺。
+设备只在灵矽监听会话处于活动状态时上传指令音频；唤醒、静音、无输入和处理超时由设备控制层统一管理；浏览器后台和锁屏不作为常驻监听承诺。
 
 ### 5.2 业务指令
 
@@ -118,7 +118,7 @@ PTT、指令键和语音唤醒共用设备控制层。按键有按压位移、�
 
 ### 6.1 音频路由
 
-- 收听状态：RTN 只订阅远端，本地唤醒可以运行。
+- 收听状态：RTN 只订阅远端，灵矽监听按设备状态运行。
 - 指令状态：先阻断 RTN 上行，再采集指令并发送到灵矽；指令期间降低或暂停远端播放。
 - 对讲状态：RTN 发布本地音频；普通对讲音频不送灵矽。
 - TTS 状态：暂停唤醒触发和指令上传，避免自唤醒。
@@ -203,6 +203,8 @@ sequenceDiagram
 | POST | `/api/v1/talk/start` | 请求开始上行 |
 | POST | `/api/v1/talk/end` | 请求结束上行 |
 | POST | `/api/v1/linx/chat` | 接收灵矽 Chat SSE 意图 |
+| GET | `/api/v1/linx/ws` | 3D 原型到真实灵矽设备 WebSocket 的服务端桥接 |
+| POST | `/api/v1/linx/bind` | 开机后检查并自动完成灵矽设备绑定；支持业务会话或设备凭证认证 |
 
 ### 浏览器设备注册
 
@@ -249,11 +251,13 @@ sequenceDiagram
 
 ### 8.4 灵矽音频接入
 
-优先使用官方 Web 接入；若设备协议需要浏览器无法设置的握手头，则由服务端建立受鉴权的音频桥接。桥接负责设备注册、握手、音频编码、ASR/TTS 音频转发、会话释放和断线处理；灵矽凭证只存服务端。必须实测上行格式、采样率、帧长、TTS 格式、播放完成信号和并发限制，不能假设浏览器 `MediaRecorder` 输出可直接使用。
+3D 原型通过 `/api/v1/linx/ws` 连接项目服务端，服务端使用 `LINX_DEVICE_ID`、`LINX_DEVICE_TOKEN` 和 `LINX_WS_URL` 建立灵矽 WebSocket。服务端向灵矽发送 PCM `hello`，转发浏览器的 `listen start/stop` 与 16 kHz 单声道 16 bit 小端 PCM 二进制帧，并将灵矽的 STT、TTS 状态和音频帧转发给浏览器。浏览器不能设置灵矽要求的握手头，也不接触灵矽长期凭证。
+
+灵矽 Chat 模式仍会从云端向 `/api/v1/linx/chat` 发起 HTTP POST + SSE 请求；本地联调必须通过公网隧道暴露该路径。业务服务返回的 `message` 由灵矽合成 TTS，音频沿原 WebSocket 返回设备。当前桥接不把灵矽 Token 写入数据库或浏览器存储。
 
 ## 9. 安全、部署与运行约束
 
-- `SESSION_SECRET`、七牛 AK/SK、RTN AppID、`LINX_CHAT_TOKEN` 和桥接凭证只放本地 `.env` 或部署环境。
+- `SESSION_SECRET`、七牛 AK/SK、RTN AppID、`LINX_CHAT_TOKEN`、`LINX_DEVICE_ID` 和 `LINX_DEVICE_TOKEN` 只放本地 `.env` 或部署环境。
 - RoomToken 由 Go 短时签发，浏览器不接触七牛 SecretKey。
 - 灵矽回调校验 Bearer token、设备映射、请求类型、会话 ID 和动作权限。
 - WebSocket 仅接受有效设备会话，动作按设备定向；频道成员事件按成员关系发送。
@@ -266,7 +270,7 @@ sequenceDiagram
 1. 设备控制层、三按键灰模、屏幕状态和资源生命周期。
 2. 频道、成员、RTN 收听与 PTT 对讲闭环。
 3. 灵矽音频桥接、Chat 意图、动作 ID、回执、确认与取消。
-4. “你好小路”本地唤醒、连续说法、对讲中打断和回声处理。
+4. 灵矽云端唤醒、连续说法、对讲中打断和回声处理。
 5. 正式模型、材质、灯光、二维码和移动端体验。
 6. 目标硬件平台的 RTN、灵矽、唤醒、声学、弱网和续航评估。
 
@@ -282,6 +286,10 @@ sequenceDiagram
 | `SESSION_SECRET` | 设备/用户会话签名 |
 | `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_RTN_APP_ID` | 七牛 RTN 凭证 |
 | `LINX_CHAT_TOKEN` | 灵矽 Chat 回调校验 |
+| `LINX_API_KEY` / `LINX_AGENT_ID` | 灵矽官方设备 API 认证和智能体 ID；3D 原型按下电源键时检查并自动绑定虚拟设备 |
+| `LINX_DEVICE_ID` | 虚拟设备 MAC/伪 MAC；用于 OTA、设备绑定和 WebSocket 握手 |
+| `LINX_DEVICE_TOKEN` | 已绑定设备的 WebSocket Token；已配置时开机直接复用，未配置时由开机绑定流程获取 |
+| `LINX_API_BASE_URL` / `LINX_OTA_URL` | 灵矽设备 API 和 OTA 地址，默认使用官方地址 |
 | `PUBLIC_BASE_URL` | 灵矽访问本服务的公网基址 |
 
 `make up` 构建并启动 Docker Compose；`make server` 启动 Go；`make web` 启动 Vite；`make health` 请求 `/healthz`；`make down` 停止服务。真实配置不入 Git。

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
 	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
@@ -17,7 +18,11 @@ import (
 
 // Register 挂上会话、当前用户、频道、RTN RoomToken、WebSocket 信令，以及灵矽 Chat 回调。
 // linxToken 是 LINX_CHAT_TOKEN。为空时回调一律拒绝。
-func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string) {
+func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string, managers ...*linxbridge.Manager) {
+	var bridge *linxbridge.Manager
+	if len(managers) > 0 {
+		bridge = managers[0]
+	}
 	hub := ws.NewHub(users, channels)
 	gate := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
@@ -32,6 +37,29 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("POST /api/v1/talk/start", TalkStart(users, hub))
 	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
 	mux.HandleFunc("GET /api/v1/device/ws", hub.ServeHTTP)
+	mux.HandleFunc("POST /api/v1/linx/bind", func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
+			if _, err := users.Authenticate(r.Context(), token); err != nil {
+				writeJSON(w, http.StatusUnauthorized, errorBody("未登录或会话无效"))
+				return
+			}
+		} else if _, err := users.AuthenticateDevice(r.Context(), r.Header.Get("X-Device-ID"), r.Header.Get("X-Device-Credential")); err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorBody("未登录或设备凭证无效"))
+			return
+		}
+		if bridge == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("服务器未配置灵矽设备绑定"))
+			return
+		}
+		config, err := bridge.Ensure(r.Context())
+		if err != nil {
+			log.Printf("linx bind: %v", err)
+			writeJSON(w, http.StatusBadGateway, errorBody("灵矽设备绑定失败"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"bound": true, "device_id": config.DeviceID})
+	})
+	mux.Handle("GET /api/v1/linx/ws", linxbridge.Handler{Users: users, Bridge: bridge})
 	mux.HandleFunc("POST /api/v1/linx/chat", LinxChat(users, channels, hub, gate, linxToken))
 }
 

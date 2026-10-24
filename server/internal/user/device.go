@@ -75,3 +75,20 @@ func (s *Service) DeviceSession(ctx context.Context, nickname, deviceID, credent
 	}
 	return Session{User: u, Token: token}, nil
 }
+
+// AuthenticateDevice verifies a server-issued device credential without
+// creating an application session. Hardware boot operations use this proof.
+func (s *Service) AuthenticateDevice(ctx context.Context, deviceID, credential string) (store.Device, error) {
+	if s.Secret == "" || !validDeviceID(deviceID) || len(credential) != 64 {
+		return store.Device{}, ErrUnauthorized
+	}
+	device, err := s.Store.DeviceByID(ctx, strings.TrimSpace(deviceID))
+	if err != nil {
+		return store.Device{}, ErrUnauthorized
+	}
+	hash := credentialHash(credential)
+	if subtle.ConstantTimeCompare([]byte(hash), []byte(device.CredentialHash)) != 1 {
+		return store.Device{}, ErrUnauthorized
+	}
+	return device, nil
+}

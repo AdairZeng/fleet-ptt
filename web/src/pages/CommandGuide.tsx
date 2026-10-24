@@ -40,6 +40,6 @@ export function CommandGuide() {
       <dl>{group.commands.map(([phrase, description]) => <div key={phrase}><dt>“{phrase}”</dt><dd>{description}</dd></div>)}</dl>
     </section>)}
     <p className="hint">云端识别需要时间：正在对讲时，唤醒词和指令可能先被频道听到。希望不外传时，先松开 PTT 或按指令键停发。</p>
-    <p className="hint">开关机需长按电源；PTT 按住发送、松开停止；指令键短按进入或结束指令，长按取消。首次昵称和浏览器权限仍需手动设置。</p>
+    <p className="hint">开关机需长按电源；PTT 按住发送、松开停止；指令键短按进入或结束指令，长按取消。首次昵称可语音设置并确认；浏览器权限仍需手动授权。</p>
   </details>
 }

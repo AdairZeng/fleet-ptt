@@ -42,6 +42,7 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("POST /api/v1/talk/start", TalkStart(users, hub))
 	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
 	mux.HandleFunc("GET /api/v1/device/ws", hub.ServeHTTP)
+	mux.Handle("GET /api/v1/device/setup/ws", linxbridge.SetupHandler{Users: users, Bridge: bridge})
 	mux.Handle("GET /api/v1/linx/ws", linxbridge.Handler{Users: users, Bridge: bridge, Wake: wake})
 	mcp := newLinxMCP(users, channels, hub, linxToken, agentID, wake)
 	mux.Handle("/api/v1/mcp", mcp)

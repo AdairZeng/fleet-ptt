@@ -12,7 +12,7 @@ export default function App() {
     <p className="sleep-tagline">让同行，更有默契。</p>
     <div className="sleep-instruction"><span>已关机</span><p>长按右下方电源键，开启连接</p></div>
   </div> : device.phase === 'booting' ? <p>启动中…</p> : !session || control.editingNickname ? (
-    <NicknamePage onEnter={control.enter} joinRequest={control.joinRequest} />
+    <NicknamePage onEnter={control.enter} joinRequest={control.joinRequest} firstSetup={!session} registerControls={control.registerSetupControls} />
   ) : (
     <ChannelPage
       feedback={control.feedback}

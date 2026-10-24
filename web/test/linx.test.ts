@@ -17,11 +17,13 @@ function environment() {
     static sockets: Socket[] = []
     readyState = 1
     binaryType = ''
+    onopen: (() => void) | null = null
+    url = ''
     onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null
     onclose: (() => void) | null = null
     onerror: (() => void) | null = null
     sent: unknown[] = []
-    constructor() { Socket.sockets.push(this); queueMicrotask(() => this.event({ type: 'hello', session_id: 's', audio_params: { sample_rate: 16000 } })) }
+    constructor(url: string) { this.url = url; Socket.sockets.push(this); queueMicrotask(() => { this.onopen?.(); this.event({ type: 'hello', session_id: 's', audio_params: { sample_rate: 16000 } }) }) }
     event(message: object) { this.onmessage?.({ data: JSON.stringify(message) }) }
     send(value: string | Uint8Array) { this.sent.push(typeof value === 'string' ? JSON.parse(value) : value) }
     close() { this.readyState = 3; this.onclose?.() }
@@ -388,4 +390,74 @@ test('denied microphone permission explains settings and can be retried', async 
     assert.ok(env.Context.contexts[0].processor.onaudioprocess)
   } finally { device.close(); env.restore() }
   assert.equal(env.tracks[0].stopped, true)
+})
+
+const setupCredential = { device_id: 'device', mac_id: 'mac', device_credential: 'proof' }
+
+test('first setup authenticates in a frame and only captures after the spoken prompt', async () => {
+  const env = environment()
+  const events: string[] = []
+  const device = new LinxDevice(setupCredential, { onEvent: (event) => { events.push(event.state ?? event.type) } })
+  try {
+    await device.start()
+    const socket = env.Socket.sockets[0]
+    assert.equal(socket.url, 'ws://localhost/api/v1/device/setup/ws')
+    assert.deepEqual(socket.sent[0], { type: 'authenticate', device_id: 'device', device_credential: 'proof' })
+    assert.deepEqual(socket.sent[1], { type: 'onboarding', state: 'start' })
+    const capture = () => env.Context.contexts[0].processor.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(320) } })
+    capture()
+    assert.equal(socket.sent.filter((entry) => entry instanceof Uint8Array).length, 0)
+    socket.event({ type: 'onboarding', state: 'speaking', turn_id: 'setup-1' })
+    socket.event({ type: 'tts', state: 'start' })
+    socket.onmessage?.({ data: new ArrayBuffer(8) })
+    socket.event({ type: 'tts', state: 'stop' })
+    env.flush()
+    await tick()
+    assert.equal(socket.sent.some((entry: any) => entry.state === 'playback_done'), false)
+    env.Context.contexts[0].sources[0].end()
+    assert.deepEqual(socket.sent.at(-1), { type: 'onboarding', state: 'playback_done', session_id: 's', turn_id: 'setup-1' })
+    socket.event({ type: 'onboarding', state: 'listening' })
+    capture()
+    assert.equal(socket.sent.filter((entry) => entry instanceof Uint8Array).length, 1)
+    socket.event({ type: 'onboarding', state: 'confirmed', nickname: '老王' })
+    assert.equal(env.tracks[0].stopped, true)
+    assert.equal(socket.readyState, 3)
+    assert.equal(events.at(-1), 'confirmed')
+    assert.equal(events.includes('disconnected'), false)
+  } finally { device.close(); env.restore() }
+})
+
+test('restarting first setup closes the previous session and discards playback', async () => {
+  const env = environment()
+  const device = new LinxDevice(setupCredential)
+  try {
+    await device.start()
+    const old = env.Socket.sockets[0]
+    old.event({ type: 'onboarding', state: 'speaking', turn_id: 'old' })
+    await device.listen()
+    assert.equal(old.readyState, 3)
+    assert.equal(env.Socket.sockets.length, 2)
+    assert.deepEqual(env.Socket.sockets[1].sent.at(-1), { type: 'onboarding', state: 'start' })
+    old.event({ type: 'onboarding', state: 'confirmed', nickname: '迟到' })
+    assert.equal(env.Socket.sockets[1].readyState, 1)
+  } finally { device.close(); env.restore() }
+})
+
+test('first setup discards a pending candidate when the page goes into the background', async () => {
+  const env = environment()
+  const events: string[] = []
+  const device = new LinxDevice(setupCredential, { onEvent: (event) => events.push(event.state ?? event.type) })
+  try {
+    await device.start()
+    const old = env.Socket.sockets[0]
+    old.event({ type: 'onboarding', state: 'speaking', turn_id: 'candidate', nickname: '老王' })
+    env.hide(true)
+    old.event({ type: 'onboarding', state: 'confirmed', nickname: '老王' })
+    assert.equal(events.includes('confirmed'), false)
+    assert.equal(old.readyState, 3)
+    env.hide(false)
+    await tick()
+    assert.equal(env.Socket.sockets.length, 2)
+    assert.deepEqual(env.Socket.sockets[1].sent.at(-1), { type: 'onboarding', state: 'start' })
+  } finally { device.close(); env.restore() }
 })

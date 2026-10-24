@@ -1,3 +1,4 @@
+import type { DeviceCredential } from '../state/device.ts'
 import type { Session } from '../state/session.ts'
 import { acquireMicrophone, setPlaybackBlocked } from './microphone.ts'
 
@@ -9,6 +10,7 @@ type LinxEvent = {
   text?: string
   session_id?: string
   turn_id?: string
+  nickname?: string
   is_aborted?: boolean
 }
 
@@ -21,7 +23,7 @@ export type LinxHandlers = {
 // Continuous cloud recognition uses the same transport as the hardware device.
 // The server gates agent output and business tools until a wake turn is accepted.
 export class LinxDevice {
-  private readonly session: Session
+  private readonly session: Session | DeviceCredential
   private readonly handlers: LinxHandlers
   private socket: WebSocket | null = null
   private connection: Promise<void> | null = null
@@ -52,10 +54,18 @@ export class LinxDevice {
       this.turnID = ''
       this.releaseCapture()
       this.clearPlayback()
-      if (this.socket?.readyState === WebSocket.OPEN) {
+      if (!this.settingUp && this.socket?.readyState === WebSocket.OPEN) {
         this.send({ type: 'wake', state: 'cancel', session_id: this.sessionID })
         this.send({ type: 'abort', session_id: this.sessionID })
         this.send({ type: 'listen', state: 'stop', session_id: this.sessionID })
+      }
+      if (this.settingUp) {
+        this.cancelConnection?.()
+        this.cancelConnection = null
+        const socket = this.socket
+        this.socket = null
+        this.connection = null
+        socket?.close()
       }
       this.handlers.onEvent?.({ type: 'suspended' })
     } else {
@@ -66,16 +76,23 @@ export class LinxDevice {
     }
   }
 
-  constructor(session: Session, handlers: LinxHandlers = {}) {
+  constructor(session: Session | DeviceCredential, handlers: LinxHandlers = {}) {
     this.session = session
     this.handlers = handlers
   }
+
+  private get settingUp(): boolean { return 'device_credential' in this.session }
 
   connect(): Promise<void> {
     if (this.closed) return Promise.reject(new Error('设备已关闭'))
     if (this.connection) return this.connection
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-    const socket = new WebSocket(`${protocol}://${location.host}/api/v1/linx/ws?token=${encodeURIComponent(this.session.session_token)}`)
+    const path = 'device_credential' in this.session ? '/api/v1/device/setup/ws' : `/api/v1/linx/ws?token=${encodeURIComponent(this.session.session_token)}`
+    const socket = new WebSocket(`${protocol}://${location.host}${path}`)
+    if ('device_credential' in this.session) {
+      const credential = this.session
+      socket.onopen = () => socket.send(JSON.stringify({ type: 'authenticate', device_id: credential.device_id, device_credential: credential.device_credential }))
+    }
     socket.binaryType = 'arraybuffer'
     this.socket = socket
     this.connection = new Promise<void>((resolve, reject) => {
@@ -179,11 +196,28 @@ export class LinxDevice {
     }
     this.source.connect(this.processor)
     this.processor.connect(this.audioContext.destination)
-    this.resumeCapture()
+    if (this.settingUp) this.send({ type: 'onboarding', state: 'start' })
+    else this.resumeCapture()
     this.handlers.onEvent?.({ type: 'ready' })
   }
 
   async listen(): Promise<void> {
+    if (this.settingUp) {
+      this.unlockAudio()
+      this.generation += 1
+      this.turnID = ''
+      this.releaseCapture()
+      this.clearPlayback()
+      this.cancelConnection?.()
+      this.cancelConnection = null
+      const socket = this.socket
+      this.socket = null
+      this.connection = null
+      socket?.close()
+      await this.starting?.catch(() => {})
+      await this.start()
+      return
+    }
     await this.start()
     if (this.closed || document.hidden) return
     this.turnID = ''
@@ -197,6 +231,10 @@ export class LinxDevice {
     this.turnID = ''
     this.clearPlayback()
     if (this.socket?.readyState !== WebSocket.OPEN) return
+    if (this.settingUp) {
+      void this.listen().catch((error: unknown) => { if (!this.closed) this.handlers.onEvent?.({ type: 'error', text: error instanceof Error ? error.message : '语音设置重试失败' }) })
+      return
+    }
     this.send({ type: 'wake', state: 'cancel', session_id: this.sessionID })
     this.send({ type: 'abort', session_id: this.sessionID })
     this.resumeCapture()
@@ -219,6 +257,20 @@ export class LinxDevice {
   }
 
   private handleEvent(message: LinxEvent): void {
+    if (this.settingUp && message.type === 'onboarding') {
+      if (document.hidden) return
+      if (message.state === 'speaking') {
+        this.clearPlayback()
+        this.turnID = message.turn_id ?? ''
+        this.capturing = false
+        this.pendingPCM = new Uint8Array(0)
+      } else if (message.state === 'listening') {
+        this.turnID = ''
+        this.resumeCapture()
+      } else if (message.state === 'confirmed') {
+        this.close()
+      }
+    }
     if (message.type === 'wake') {
       if (message.state === 'detected') {
         if (document.hidden) { this.stop(); return }
@@ -261,7 +313,7 @@ export class LinxDevice {
     if (this.closed || document.hidden || !this.processor || this.playbackActive || this.socket?.readyState !== WebSocket.OPEN) return
     this.pendingPCM = new Uint8Array(0)
     this.capturing = true
-    this.send({ session_id: this.sessionID, type: 'listen', state: 'start', mode: 'realtime' })
+    if (!this.settingUp) this.send({ session_id: this.sessionID, type: 'listen', state: 'start', mode: 'realtime' })
   }
 
   private releaseCapture(): void {
@@ -315,7 +367,7 @@ export class LinxDevice {
 
   private finishTurn(): void {
     if (this.socket?.readyState !== WebSocket.OPEN || this.closed) return
-    this.send({ type: 'wake', state: 'playback_done', session_id: this.sessionID, turn_id: this.turnID })
+    this.send({ type: this.settingUp ? 'onboarding' : 'wake', state: 'playback_done', session_id: this.sessionID, turn_id: this.turnID })
   }
 
   private schedulePlayback(buffer: AudioBuffer): void {

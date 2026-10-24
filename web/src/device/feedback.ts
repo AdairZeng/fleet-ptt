@@ -18,6 +18,42 @@ export class DeviceFeedback {
     if (this.context.state === 'suspended') await this.context.resume()
   }
 
+  async welcome(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    const context = this.context
+    if (!context || context.state !== 'running') throw new Error('请先点按设备以启用声音')
+    const response = await fetch('/audio/welcome.wav?v=linx-1', { signal })
+    if (!response.ok) throw new Error('开机欢迎语加载失败')
+    const buffer = await context.decodeAudioData(await response.arrayBuffer())
+    signal.throwIfAborted()
+    if (this.context !== context || context.state !== 'running') throw new Error('开机欢迎语播放已停止')
+    this.stop()
+    await new Promise<void>((resolve, reject) => {
+      const source = context.createBufferSource()
+      source.buffer = buffer
+      source.connect(context.destination)
+      let settled = false
+      const finish = (error?: Error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        signal.removeEventListener('abort', cancel)
+        source.onended = null
+        source.stop()
+        source.disconnect()
+        if (this.cancelPlayback === cancel) this.cancelPlayback = null
+        if (error) reject(error)
+        else resolve()
+      }
+      const cancel = () => finish(new DOMException('已取消欢迎语', 'AbortError'))
+      const timer = window.setTimeout(() => finish(new Error('欢迎语播放超时')), (buffer.duration + 2) * 1000)
+      this.cancelPlayback = cancel
+      signal.addEventListener('abort', cancel, { once: true })
+      source.onended = () => finish()
+      source.start()
+    })
+  }
+
   async play(sound: DeviceSound, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw new DOMException('已取消提示音', 'AbortError')
     const context = this.context

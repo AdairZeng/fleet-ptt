@@ -58,3 +58,32 @@ func TestDeviceCredentialRequiredAndNicknameStable(t *testing.T) {
 		t.Fatalf("mac mapping user %q, want %q", byMAC.ID, first.User.ID)
 	}
 }
+
+func TestConfirmedNicknameRestoresWithDeviceProof(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "restore.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := &Service{Store: st, Secret: "restore-secret"}
+	ctx := context.Background()
+	now := time.Now()
+	proof, err := svc.RegisterDevice(ctx, nil, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.DeviceSession(ctx, "", proof.DeviceID, proof.Credential, now); !errors.Is(err, ErrInvalidNickname) {
+		t.Fatalf("unset nickname restore: %v", err)
+	}
+	saved, err := svc.DeviceSession(ctx, "老王", proof.DeviceID, proof.Credential, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := svc.DeviceSession(ctx, "", proof.DeviceID, proof.Credential, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.User.ID != saved.User.ID || restored.User.DisplayName != "老王" {
+		t.Fatalf("restore changed identity: %+v", restored.User)
+	}
+}

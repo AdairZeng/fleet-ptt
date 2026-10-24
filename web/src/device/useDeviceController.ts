@@ -25,6 +25,10 @@ export function useDeviceController() {
   const [soundError, setSoundError] = useState('')
   const lifecycle = useRef(0)
   const controls = useRef<(action: DeviceAction) => void>(() => {})
+  const registerSetupControls = useCallback((handler: (action: DeviceAction) => void) => {
+    controls.current = handler
+    return () => { if (controls.current === handler) controls.current = () => {} }
+  }, [])
   const reportDevice = useCallback((event: DeviceEvent) => dispatchDevice(event), [])
   const [joinRequest] = useState(() => readJoinLocation(window.location))
 
@@ -32,8 +36,10 @@ export function useDeviceController() {
     const revision = lifecycle.current
     const next = await createSession(nickname, session)
     if (revision !== lifecycle.current) throw new Error('设备已关机，设置结果未应用')
+    saveSession(next)
     const response = await fetch('/api/v1/device/boot', { method: 'POST', headers: authHeaders(next) })
     if (!response.ok) throw new Error('灵汐设备绑定失败')
+    if (revision !== lifecycle.current) throw new Error('设备已关机，设置结果未应用')
     saveSession(next)
     setSession(next)
     setDisplayNickname(next.nickname)
@@ -50,7 +56,7 @@ export function useDeviceController() {
 
   useEffect(() => {
     if (!device.powered) { feedback.close(); return }
-    if (device.sound === 'none') return
+    if (device.sound === 'none' || device.sound === 'boot') return
     void feedback.play(device.sound).catch((error: unknown) => {
       if (error instanceof Error && error.name !== 'AbortError') setSoundError(error.message)
     })
@@ -77,9 +83,28 @@ export function useDeviceController() {
   useEffect(() => {
     if (device.phase !== 'booting') return
     let cancelled = false
+    const abort = new AbortController()
     async function boot() {
       try {
+        await feedback.welcome(abort.signal).catch((error: unknown) => {
+          if (abort.signal.aborted) throw error
+          setSoundError(error instanceof Error ? error.message : '欢迎语播放失败')
+        })
+        if (cancelled) return
         const credential = loadDeviceCredential() ?? await registerDevice(session?.session_token)
+        // A confirmed nickname may have been saved before a page close or a
+        // failed boot response. Recover the identity using device proof.
+        let restored: Session | null = null
+        if (!session) {
+          const response = await fetch('/api/v1/device/session', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...credential, nickname: '' }),
+          })
+          if (response.ok) {
+            const body = await response.json() as Session
+            restored = { ...body, mac_id: credential.mac_id }
+          } else if (response.status !== 400) throw new Error('设备身份恢复失败')
+        }
         const headers = session ? authHeaders(session) : new Headers({
           'X-Device-ID': credential.device_id,
           'X-Device-Credential': credential.device_credential,
@@ -87,15 +112,18 @@ export function useDeviceController() {
         const response = await fetch('/api/v1/device/boot', { method: 'POST', headers })
         if (!response.ok) throw new Error('灵汐设备绑定失败')
         await new Promise((resolve) => window.setTimeout(resolve, 250))
-        if (!cancelled) dispatchDevice({ type: 'BOOT_READY', hasChannel: false })
+        if (!cancelled) {
+          if (restored) { saveSession(restored); setSession(restored); setDisplayNickname(restored.nickname) }
+          dispatchDevice({ type: 'BOOT_READY', hasChannel: false })
+        }
       } catch (error) {
         if (!cancelled) dispatchDevice({ type: 'FAIL' })
-        setSoundError(error instanceof Error ? error.message : '设备启动失败')
+        if (!cancelled) setSoundError(error instanceof Error ? error.message : '设备启动失败')
       }
     }
     void boot()
-    return () => { cancelled = true }
-  }, [device.phase, session])
+    return () => { cancelled = true; abort.abort() }
+  }, [device.phase, session, feedback])
 
   const onDeviceAction = (action: DeviceAction) => {
     if (action === 'power') {
@@ -118,6 +146,7 @@ export function useDeviceController() {
     changeNickname,
     controls,
     reportDevice,
+    registerSetupControls,
     setDisplayNickname,
     onDeviceAction,
     status,

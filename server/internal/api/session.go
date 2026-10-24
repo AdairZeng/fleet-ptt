@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
 	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
@@ -17,7 +18,11 @@ import (
 
 // Register 挂上会话、当前用户、频道、RTN RoomToken、WebSocket 信令，以及灵矽 Chat 回调。
 // linxToken 是 LINX_CHAT_TOKEN。为空时回调一律拒绝。
-func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string) {
+func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string, bridges ...linxbridge.Config) {
+	bridge := linxbridge.Config{}
+	if len(bridges) > 0 {
+		bridge = bridges[0]
+	}
 	hub := ws.NewHub(users, channels)
 	gate := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
@@ -32,6 +37,7 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("POST /api/v1/talk/start", TalkStart(users, hub))
 	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
 	mux.HandleFunc("GET /api/v1/device/ws", hub.ServeHTTP)
+	mux.Handle("GET /api/v1/linx/ws", linxbridge.Handler{Users: users, Config: bridge})
 	mux.HandleFunc("POST /api/v1/linx/chat", LinxChat(users, channels, hub, gate, linxToken))
 }
 

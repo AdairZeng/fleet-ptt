@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
@@ -49,10 +50,18 @@ func main() {
 	if base := publicBaseURL(os.Getenv("PUBLIC_BASE_URL")); base != "" {
 		log.Printf("linx chat callback: %s/api/v1/linx/chat", base)
 	}
+	bridge := linxbridge.Config{
+		URL:      getenv("LINX_WS_URL", linxbridge.DefaultURL),
+		DeviceID: os.Getenv("LINX_DEVICE_ID"),
+		Token:    os.Getenv("LINX_DEVICE_TOKEN"),
+	}
+	if !bridge.Ready() {
+		log.Print("LINX_DEVICE_ID or LINX_DEVICE_TOKEN is empty; /api/v1/linx/ws is disabled")
+	}
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(staticDir, svc, channels, tokens, linxToken),
+		Handler:           newHandler(staticDir, svc, channels, tokens, linxToken, bridge),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

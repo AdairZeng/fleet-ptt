@@ -14,6 +14,8 @@
 
 灵矽回调地址为 `{PUBLIC_BASE_URL}/api/v1/linx/chat`，请求使用 `Authorization: Bearer <LINX_CHAT_TOKEN>`。回调负责将识别后的意图交给小路业务层，业务层执行频道、对讲和设备动作，并返回适合 TTS 的回答。
 
+3D 原型通过 `/api/v1/linx/ws` 连接真实灵矽设备 WebSocket。服务端使用 `LINX_DEVICE_ID`、`LINX_DEVICE_TOKEN` 建立灵矽连接，浏览器不接触灵矽凭证。完整本地联调需要用公网隧道暴露 `/api/v1/linx/chat`，例如 `cloudflared tunnel --url http://127.0.0.1:8080`，再将隧道地址配置到 `PUBLIC_BASE_URL`。
+
 ## 本地启动
 
 ```bash

@@ -4,6 +4,7 @@ import type { DeviceCommand } from '../signaling/index.ts'
 import type { DeviceAction } from './DeviceShell.tsx'
 import type { DeviceEvent } from './controller.ts'
 import type { RoomSnapshot } from './useDeviceTalk.ts'
+import { LinxDevice } from '../linx/index.ts'
 import { useChannelSignaling } from '../signaling/useChannelSignaling.ts'
 import {
   createChannel,
@@ -100,6 +101,7 @@ export function useDeviceChannel({
   const leaveRoomRef = useRef<() => Promise<void>>(async () => {})
   const switchingRef = useRef(false)
   const openedJoinRef = useRef(false)
+  const linxRef = useRef<LinxDevice | null>(null)
   const refreshChannels = useCallback(() => {
     setListRevision((n) => n + 1)
   }, [])
@@ -210,6 +212,26 @@ export function useDeviceChannel({
     },
     [finishCommand],
   )
+  useEffect(() => {
+    const device = new LinxDevice(session, {
+      onEvent: (event) => {
+        if (!active.current) return
+        if (event.type === 'stt' && event.text) {
+          linxRef.current?.stop()
+          setCommanding(false)
+          setVoiceNotice(`听到：${event.text}`)
+        }
+        if (event.type === 'tts' && event.state === 'start') setVoiceNotice('小路正在回答…')
+        if (event.type === 'tts' && event.state === 'stop') setVoiceNotice('')
+        if (event.type === 'error') setSignalError(event.text || '灵汐连接异常')
+      },
+    })
+    linxRef.current = device
+    return () => {
+      device.close()
+      linxRef.current = null
+    }
+  }, [session])
   const signaling = useChannelSignaling(session, {
     executeAction: async (action: DeviceCommand, signal: AbortSignal) => {
       requireActive()
@@ -393,14 +415,20 @@ export function useDeviceChannel({
     const next = commandToggle(commanding)
     if (!next.stopUplink) {
       setCommanding(false)
+      linxRef.current?.stop()
       return
     }
     setArming(true)
     try {
       await stopUplinkRef.current()
       if (commandGeneration.current !== generation) return
-      setCommanding(false)
-      setVoiceNotice('语音暂未就绪，请使用屏幕操作。')
+      await linxRef.current?.listen()
+      if (commandGeneration.current !== generation) {
+        linxRef.current?.stop()
+        return
+      }
+      setCommanding(true)
+      setVoiceNotice('请说出指令')
       setSignalError('')
     } catch (err) {
       if (commandGeneration.current === generation) setSignalError(err instanceof Error ? err.message : '停止发送失败')
@@ -433,6 +461,7 @@ export function useDeviceChannel({
         setCommanding(false)
         setArming(false)
         void stopUplinkRef.current().catch(() => {})
+        linxRef.current?.stop()
       } else if (action === 'ptt-end') {
         void stopUplinkRef.current().catch(() => {})
       } else if (action === 'ptt-start' && !inCommand && !busy) {
@@ -448,7 +477,11 @@ export function useDeviceChannel({
 
   useEffect(() => {
     if (!commanding) return
-    const timer = window.setTimeout(() => setCommanding(false), 30000)
+    const timer = window.setTimeout(() => {
+      linxRef.current?.stop()
+      setCommanding(false)
+      setVoiceNotice('指令采集超时')
+    }, 30000)
     return () => window.clearTimeout(timer)
   }, [commanding])
 

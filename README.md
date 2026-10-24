@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/xiaolu-icon-256.png" alt="小路：道路与声波组成的对讲机图标" width="128" height="128" />
+</p>
+
 # 小路 · 随声，同行。
 
 **面向司机、车队和现场班组的语音优先群组对讲系统。**

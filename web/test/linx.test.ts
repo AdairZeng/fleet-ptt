@@ -356,3 +356,36 @@ test('gesture unlock resumes an audio context while initial start is pending', a
     assert.ok(env.Context.contexts[0].processor.onaudioprocess)
   } finally { device.close(); env.Context.prototype.resume = original; env.restore() }
 })
+
+test('microphone permission is requested before blocked audio resume or network handshake', async () => {
+  const env = environment()
+  let requested = false
+  let resume: () => void = () => {}
+  env.Context.prototype.resume = () => new Promise<void>(resolve => { resume = resolve })
+  env.getMedia(async () => { requested = true; return env.stream })
+  const device = new LinxDevice(session)
+  try {
+    const starting = device.start()
+    assert.equal(requested, true)
+    await tick()
+    assert.equal(env.Socket.sockets.length, 0)
+    device.close()
+    assert.equal(env.tracks[0].stopped, true)
+    resume()
+    await starting
+    assert.equal(env.Socket.sockets.length, 0)
+  } finally { device.close(); env.restore() }
+})
+
+test('denied microphone permission explains settings and can be retried', async () => {
+  const env = environment()
+  const device = new LinxDevice(session)
+  try {
+    env.getMedia(async () => { throw new DOMException('denied', 'NotAllowedError') })
+    await assert.rejects(device.start(), /网站权限中允许麦克风/)
+    env.getMedia(async () => env.stream)
+    await device.start()
+    assert.ok(env.Context.contexts[0].processor.onaudioprocess)
+  } finally { device.close(); env.restore() }
+  assert.equal(env.tracks[0].stopped, true)
+})

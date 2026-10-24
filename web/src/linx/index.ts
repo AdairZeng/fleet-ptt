@@ -148,13 +148,19 @@ export class LinxDevice {
     }
     if (document.hidden) { this.handlers.onEvent?.({ type: 'suspended' }); return }
     this.audioContext ??= new AudioContext()
-    await this.audioContext.resume()
-    if (this.closed || generation !== this.generation) return
-    await this.connect()
-    if (this.closed || generation !== this.generation) return
+    // Permission must not wait for gesture-gated playback or the remote handshake.
     const lease = await acquireMicrophone()
     if (this.closed || generation !== this.generation) { lease.release(); return }
     this.releaseMicrophone = lease.release
+    try {
+      await this.audioContext.resume()
+      if (this.closed || generation !== this.generation) return
+      await this.connect()
+    } catch (error) {
+      this.releaseCapture()
+      throw error
+    }
+    if (this.closed || generation !== this.generation) return
     this.source = this.audioContext.createMediaStreamSource(lease.stream)
     this.processor = this.audioContext.createScriptProcessor(2048, 1, 1)
     this.processor.onaudioprocess = (event) => {

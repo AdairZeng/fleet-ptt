@@ -12,6 +12,7 @@ import (
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/api"
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
@@ -165,13 +166,15 @@ func newMuxWithSigner(svc *user.Service, signer rtn.Signer) http.Handler {
 
 func newMuxWithLinx(svc *user.Service, signer rtn.Signer, linxToken string) http.Handler {
 	mux := http.NewServeMux()
-	api.Register(mux, svc, &channel.Service{Store: svc.Store}, signer, linxToken, "test-agent")
-	return &fixtureMux{Handler: mux, users: svc}
+	manager := linxbridge.NewManager(linxbridge.ProvisionConfig{})
+	api.Register(mux, svc, &channel.Service{Store: svc.Store}, signer, linxToken, "test-agent", manager)
+	return &fixtureMux{Handler: mux, users: svc, wake: manager.Wake}
 }
 
 type fixtureMux struct {
 	http.Handler
 	users *user.Service
+	wake  *linxbridge.WakeRegistry
 }
 
 func newService(t *testing.T) *user.Service {

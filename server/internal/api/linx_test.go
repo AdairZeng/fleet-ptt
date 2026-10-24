@@ -2,13 +2,16 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 )
 
@@ -117,6 +120,8 @@ func TestLinxMCPBusinessFlow(t *testing.T) {
 	captainBox := collectDeviceWS(t, captainWS, true)
 	driverWS := dialWS(t, srv, driverToken, false)
 	collectDeviceWS(t, driverWS, true)
+	captainWake := armMCP(t, h, "captain-mac", "voice-captain")
+	armMCP(t, h, "driver-mac", "voice-driver")
 	captain := newMCPClient(t, srv, "captain-mac", "voice-captain")
 	driver := newMCPClient(t, srv, "driver-mac", "voice-driver")
 	requireAnswer(t, captain.call("create_channel", map[string]any{"name": "装货"}), "已创建装货")
@@ -135,7 +140,25 @@ func TestLinxMCPBusinessFlow(t *testing.T) {
 	}
 	requireAnswer(t, driver.call("confirm_action", map[string]any{}), "已加入装货")
 	requireAnswer(t, captain.call("create_channel", map[string]any{"name": "卸货"}), "已创建卸货")
+	captainWake.Control("cancel", "")
+	talkTurn, ok := captainWake.STT("你好小路，开始对讲")
+	if !ok {
+		t.Fatal("talk wake rejected")
+	}
+	captainWake.Control("ready", talkTurn.TurnID)
 	requireAnswer(t, captain.call("talk_start", map[string]any{}), "已开始对讲")
+	captainWake.Output("tts", "start")
+	captainWake.Output("tts", "stop")
+	completion, ok := captainWake.Control("playback_done", talkTurn.TurnID)
+	if !ok || completion.State != "standby" {
+		t.Fatal("talk_start left command followup active")
+	}
+	if _, ok := captainWake.STT("大家开始装货"); ok {
+		t.Fatal("channel speech accepted as command")
+	}
+	next, _ := captainWake.STT("你好小路，切换装货频道")
+	captainWake.Control("ready", next.TurnID)
+
 	requireAnswer(t, captain.call("switch_channel", map[string]any{"name": "装货"}), "已切换到装货")
 	events := captainBox.snapshot()
 	endAt, switchAt := -1, -1
@@ -202,6 +225,7 @@ func TestLinxMCPRejectsInvalidTools(t *testing.T) {
 		t.Fatal("unknown device accepted")
 	}
 	// Device-dependent actions must fail without an online device acknowledgement.
+	armMCP(t, h, "captain-mac", "voice-1")
 	r = c.call("set_volume", map[string]any{"level": 50})
 	if !r.Result.IsError {
 		t.Fatalf("offline action reported success: %+v", r)
@@ -209,4 +233,58 @@ func TestLinxMCPRejectsInvalidTools(t *testing.T) {
 	if strings.Contains(getAuth(t, h, "/api/v1/me", token).Body.String(), "channel_id") {
 		t.Fatal("invalid args changed channel")
 	}
+}
+
+func armMCP(t *testing.T, h http.Handler, mac, session string) *linxbridge.WakeSession {
+	t.Helper()
+	fixture := h.(*fixtureMux)
+	u, err := fixture.users.Store.UserByMacID(context.Background(), mac)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := fixture.wake.Open(u.DeviceID, session, nil, nil)
+	t.Cleanup(func() { fixture.wake.Close(u.DeviceID, s) })
+	event, ok := s.STT("你好小路，执行指令")
+	if !ok {
+		t.Fatal("wake rejected")
+	}
+	if _, ok := s.Control("ready", event.TurnID); !ok {
+		t.Fatal("wake ack rejected")
+	}
+	return s
+}
+
+func TestLinxMCPRequiresAcknowledgedVoiceWake(t *testing.T) {
+	svc := newService(t)
+	h := newMuxWithLinx(svc, rtn.Signer{}, "linx-test-token")
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	token, _ := sessionPair(t, h, "老王", "captain-mac")
+	client := newMCPClient(t, srv, "captain-mac", "voice-1")
+	result := client.call("create_channel", map[string]any{"name": "禁止创建"})
+	if !result.Result.IsError {
+		t.Fatal("unawake tool succeeded")
+	}
+	if strings.Contains(getAuth(t, h, "/api/v1/me", token).Body.String(), "channel_id") {
+		t.Fatal("unawake call changed channel")
+	}
+	s := armMCP(t, h, "captain-mac", "voice-1")
+	requireAnswer(t, client.call("list_my_channels", map[string]any{}), "频道")
+	wrong := newMCPClient(t, srv, "captain-mac", "voice-other")
+	if !wrong.call("list_my_channels", map[string]any{}).Result.IsError {
+		t.Fatal("wrong voice session accepted")
+	}
+	s.Control("cancel", "")
+	s.Control("manual", "")
+	if !client.call("list_my_channels", map[string]any{}).Result.IsError {
+		t.Fatal("manual window authorized without STT")
+	}
+	event, ok := s.STT("我有哪些频道")
+	if !ok {
+		t.Fatal("manual STT rejected")
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); time.Sleep(20 * time.Millisecond); s.Control("ready", event.TurnID) }()
+	requireAnswer(t, client.call("list_my_channels", map[string]any{}), "频道")
+	<-done
 }

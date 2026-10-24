@@ -25,6 +25,7 @@ export function ChannelPage(props: DeviceChannelProps) {
     switchError,
     switchNotice,
     voiceNotice,
+    voiceReady,
     volumeControl,
     volume,
     voiceStartRef,
@@ -80,9 +81,10 @@ export function ChannelPage(props: DeviceChannelProps) {
         </p>
         {copy.detail ? <p className="talk-detail">{copy.detail}</p> : null}
       </section>
-      {inCommand && presence !== 'commanding' ? (
-        <p className="hint">发送已停止。语音暂未就绪，请使用屏幕操作。</p>
-      ) : null}
+      <p className="hint" role="status">{voiceReady
+        ? '语音监听已开启 · 说“你好小路”'
+        : '语音未就绪，可按指令键重试并允许麦克风权限'}</p>
+      <p className="hint">监听期间麦克风音频会发送至灵汐；关机可停止监听。</p>
       {signalError ? <p className="error">{signalError}</p> : null}
       {voiceNotice ? (
         <p className="hint" role="status">

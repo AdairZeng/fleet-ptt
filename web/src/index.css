@@ -880,11 +880,11 @@ main > .error {
 .device-screen #invitations > div { background: #133c46; padding: 9px; border: 1px solid #4f91a3; border-radius: 8px; }
 
 /* Xiaolu's titanium and glass enclosure uses a quiet product-gallery setting. */
-.device-page { color-scheme: light; color: #202735; background: radial-gradient(ellipse at 50% 45%, #fafbfd, #f0f1f4 70%); padding: 28px 16px 16px; }
-.product-heading { text-align: center; margin: 0 auto 22px; padding: 0 20px; }
-.product-heading .product-eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 0.22em; color: #7b8493; }
-.product-heading h1 { margin: 12px 0 9px; font-size: clamp(26px, 4vw, 38px); font-weight: 500; letter-spacing: -0.055em; }
-.product-heading > p:last-child { font-size: 12px; color: #7a8290; letter-spacing: 0.05em; }
+.device-page { color-scheme: light; color: #202735; background: #f5f5f3; padding: 30px 16px 12px; }
+.product-heading { text-align: center; margin: 0 auto 10px; padding: 0 20px; }
+.product-heading .product-eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 0.38em; color: #7b8493; }
+.product-heading h1 { margin: 13px 0 8px; font-size: clamp(24px, 3vw, 32px); font-weight: 400; letter-spacing: 0.03em; }
+.product-heading > p:last-child { font-size: 12px; color: #91948f; letter-spacing: 0.15em; }
 .device-stage { width: min(100%, 52rem); margin-top: 0; }
 .device-canvas-wrap {
   min-height: 0;
@@ -897,22 +897,22 @@ main > .error {
   content: '';
   position: absolute;
   bottom: 7%;
-  left: 30%;
-  width: 40%;
-  height: 5%;
-  background: #2434493b;
+  left: 36%;
+  width: 28%;
+  height: 3%;
+  background: #333b4433;
   filter: blur(24px);
   border-radius: 50%;
   pointer-events: none;
 }
-.device-canvas-wrap canvas { height: max(360px, calc(100dvh - 220px)); position: relative; }
+.device-canvas-wrap canvas { height: max(360px, calc(100dvh - 210px)); position: relative; }
 .device-model-note { top: 18px; left: 20px; color: #535e70; letter-spacing: 0.1em; font-weight: 500; }
 .device-model-note > span { font-size: 17px; }
 .device-model-note small { color: #939baa; font-size: 9px; }
 .device-hotspot {
   border: 0;
   background: transparent;
-  color: #101b28;
+  color: #c7d1da;
   box-shadow: none;
   border-radius: 50%;
   width: 44px;
@@ -926,19 +926,19 @@ main > .error {
   font-size: 12px;
 }
 .device-hotspot > span { font-weight: 600; font-size: 10px; letter-spacing: 0.04em; }
-.device-power-hotspot > span { font-size: 19px; font-weight: 400; }
-.device-hotspot small { position: absolute; top: 38px; left: 50%; transform: translateX(-50%); white-space: nowrap; color: #8191a5; font-size: 9px; font-weight: 400; }
+.device-power-hotspot > span { font-size: 15px; font-weight: 400; }
+.device-hotspot small { position: absolute; top: 39px; left: 50%; transform: translateX(-50%); white-space: nowrap; color: #8191a5; font-size: 9px; font-weight: 400; }
 .device-command-hotspot { color: #a2def2; width: 52px; height: 52px; }
-.device-command-hotspot small { top: 47px; color: #a0b1c3; letter-spacing: 0.15em; }
+.device-command-hotspot small { top: 45px; color: #a0b1c3; letter-spacing: 0.15em; }
 .device-hotspot:hover, .device-hotspot:focus-visible, .device-hotspot.held { background: #86d8f51f; outline: 1px solid #83c9e0; outline-offset: 0; box-shadow: none; }
-.device-hotspot:disabled { opacity: 0.45; }
+.device-hotspot:disabled { opacity: 0.62; }
 .voice-key-icon { display: flex; gap: 3px; align-items: center; height: 22px; }
 .voice-key-icon i { width: 2px; height: 7px; background: currentColor; border-radius: 2px; }
 .voice-key-icon i:nth-child(2), .voice-key-icon i:nth-child(4) { height: 13px; }
 .voice-key-icon i:nth-child(3) { height: 20px; }
 .device-stage-footer { display: flex; justify-content: space-between; align-items: center; padding: 17px 8px; color: #8b93a0; font-size: 10px; letter-spacing: 0.05em; }
 .device-stage-footer .device-reset.secondary { margin: 0; border: 0; padding: 7px; color: #596678; font-size: 11px; background: transparent; }
-.device-screen { color-scheme: dark; --page: #080e18; --card: #101b29; border: 0; border-radius: 4px; background: #080e18; box-shadow: none; padding: 12px; color: #e7edf6; }
+.device-screen { color-scheme: dark; --page: #090d12; --card: #111b25; border: 0; border-radius: 22px; background: #090d12; box-shadow: none; padding: 18px 16px; color: #e7edf6; }
 .device-screen-status { color: #70839c; border-color: #d4e2ff12; font-weight: 400; letter-spacing: 0.06em; font-size: 9px; }
 .device-screen .talk-bar .kicker { color: #65758d; font-size: 9px; font-weight: 400; letter-spacing: 0.15em; }
 .device-screen .talk-bar h1 { font-size: 25px; font-weight: 450; letter-spacing: -0.045em; }
@@ -960,9 +960,30 @@ main > .error {
 .device-screen .screen-menu { border-color: #b0d6ff12; }
 .device-screen .screen-menu > summary { font-size: 11px; font-weight: 400; color: #a8b8cd; }
 .device-screen .screen-menu > summary span { color: #53677c; }
+
+.device-screen-off { position: relative; background: radial-gradient(ellipse at 50% 32%, #15232b, #090d12 65%); }
+.device-screen-off .device-screen-status { visibility: hidden; }
+.device-sleep { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.sleep-symbol { display: flex; height: 48px; align-items: center; gap: 6px; margin: 0 0 22px; color: #b3d7de; }
+.sleep-symbol i { display: block; width: 3px; height: 12px; border-radius: 4px; background: currentColor; }
+.sleep-symbol i:nth-child(2), .sleep-symbol i:nth-child(4) { height: 28px; }
+.sleep-symbol i:nth-child(3) { height: 44px; }
+.device-screen .device-sleep h2 { margin: 0; font-size: 24px; color: #e1e7eb; font-weight: 400; letter-spacing: 0.18em; padding-left: 0.18em; }
+.device-screen .sleep-tagline { margin: 12px 0 30px; color: #84959d; font-size: 11px; letter-spacing: 0.08em; }
+.sleep-instruction { position: absolute; bottom: 25px; color: #86949d; font-size: 9px; }
+.sleep-instruction > span { font-size: 8px; letter-spacing: 0.16em; color: #687780; }
+.sleep-instruction p { margin: 7px 0 0; }
+.device-screen .nickname-page { padding-top: 18px; }
+.device-screen .nickname-page h1 { margin: 6px 0 12px; font-size: 25px; font-weight: 450; }
+.device-screen .nickname-page > p:not(.kicker):not(.error) { color: #95a4b3; font-size: 12px; line-height: 1.8; }
+.device-screen .nickname-page form { margin-top: 25px; }
+.device-screen .nickname-page label { color: #9aaab7; font-size: 11px; }
+.device-screen .nickname-page input { margin-top: 8px; border-radius: 9px; background: #101923; border-color: #29353f; }
+.device-screen .nickname-page button { width: 100%; margin-top: 8px; min-height: 40px; background: #d2e6e9; color: #20313c; }
+
 @media (max-width: 44rem) {
-  .device-page { padding: 25px 8px 20px; }
-  .product-heading { margin-bottom: 15px; }
+  .device-page { padding: 22px 8px 12px; }
+  .product-heading { margin-bottom: 8px; }
   .device-canvas-wrap canvas { height: max(360px, calc(100dvh - 200px)); }
   .device-model-note { top: 10px; left: 12px; }
   .device-hotspot { padding: 0; }

@@ -24,7 +24,7 @@ type DeviceScene = {
   cleanup: () => void
 }
 
-const modelURL = '/models/xiaolu.glb?v=3'
+const modelURL = '/models/xiaolu.glb?v=4'
 
 export function DeviceShell({ children, status, onAction = () => {}, phase = 'standby', indicator }: DeviceShellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -164,17 +164,15 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
   return (
     <div className="device-page">
       <header className="product-heading">
-        <p className="product-eyebrow">XIAOLU · VOICE COMPANION</p>
-        <h1>连接，自然发生。</h1>
-        <p>一句话，和同路的人保持连接。</p>
+        <p className="product-eyebrow">XIAOLU</p>
+        <h1>小路，随声同行。</h1>
+        <p>你的随身语音伙伴</p>
       </header>
       <section className="device-stage" aria-label="小路三维语音终端">
         <div className="device-canvas-wrap">
           <canvas ref={canvasRef} aria-hidden="true" />
           <div ref={overlayRef} className="device-screen-overlay" />
-          <div className="device-model-note" aria-live="polite">
-            <span>小路</span><small>{modelState === 'loading' ? '正在加载设备' : '语音对讲终端'}</small>
-          </div>
+          {modelState === 'loading' ? <div className="device-model-note" role="status">正在加载设备</div> : null}
           <button
             type="button"
             className={`device-hotspot device-power-hotspot${pressedKey === 'power' ? ' held' : ''}`}
@@ -221,13 +219,13 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
           </button>
         </div>
         {createPortal(
-          <div className="device-screen" aria-label="小路设备屏幕">
+          <div className={`device-screen${phase === 'off' ? ' device-screen-off' : ''}`} aria-label="小路设备屏幕">
             <div className="device-screen-status" role="status"><span className={`device-indicator indicator-${indicator}`} aria-hidden="true" />{status}</div>
             {children}
           </div>,
           screenElement,
         )}
-        <div className="device-stage-footer"><span>语音优先 · 随时同行</span><button type="button" className="secondary device-reset" onClick={() => sceneRef.current?.reset()}>回正视角 ↗</button></div>
+        <div className="device-stage-footer"><span>为每一次同行而连接</span><button type="button" className="secondary device-reset" onClick={() => sceneRef.current?.reset()}>回正视角</button></div>
 
       </section>
     </div>
@@ -244,7 +242,7 @@ function createScene(
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.setClearColor(0x000000, 0)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.2
+  renderer.toneMappingExposure = 1.05
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100)
   const fixedView = window.matchMedia('(max-width: 704px), (pointer: coarse)')
@@ -256,7 +254,7 @@ function createScene(
   orbit.maxPolarAngle = Math.PI * 2 / 3
   const reset = () => {
     const distance = Math.max(7.5, 1.38 / (Math.tan(THREE.MathUtils.degToRad(16)) * camera.aspect))
-    camera.position.set(distance * 0.12, 0.25, distance)
+    camera.position.set(distance * 0.085, 0.16, distance)
     orbit.enabled = !fixedView.matches
     orbit.update()
   }

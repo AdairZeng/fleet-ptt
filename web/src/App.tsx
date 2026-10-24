@@ -6,7 +6,12 @@ import { NicknamePage } from './pages/NicknamePage.tsx'
 export default function App() {
   const control = useDeviceController()
   const { device, session } = control
-  const screen = !device.powered ? <p>已关机</p> : device.phase === 'booting' ? <p>启动中…</p> : !session || control.editingNickname ? (
+  const screen = !device.powered ? <div className="device-sleep">
+    <div className="sleep-symbol" aria-hidden="true"><i /><i /><i /><i /><i /></div>
+    <h2>小路</h2>
+    <p className="sleep-tagline">让同行，更有默契。</p>
+    <div className="sleep-instruction"><span>已关机</span><p>长按右下方电源键，开启连接</p></div>
+  </div> : device.phase === 'booting' ? <p>启动中…</p> : !session || control.editingNickname ? (
     <NicknamePage onEnter={control.enter} joinRequest={control.joinRequest} />
   ) : (
     <ChannelPage

@@ -30,9 +30,10 @@ export function NicknamePage({
   }
 
   return (
-    <main>
-      <h1>fleet-ptt</h1>
-      <p>输入昵称进入车队对讲。这台设备会记住身份，下次仍对应到你。</p>
+    <main className="nickname-page">
+      <p className="kicker">很高兴认识你</p>
+      <h1>怎么称呼你？</h1>
+      <p>设置一个伙伴们熟悉的昵称，小路会记住你。</p>
       {joinRequest?.ok ? (
         <p className="hint">已扫到入群码 {joinRequest.code}。填写昵称后会加入这个频道。</p>
       ) : null}
@@ -56,7 +57,7 @@ export function NicknamePage({
         </label>
         {error ? <p className="error">{error}</p> : null}
         <button type="submit" disabled={pending}>
-          {pending ? '进入中…' : '进入'}
+          {pending ? '进入中…' : '开始同行'}
         </button>
       </form>
     </main>

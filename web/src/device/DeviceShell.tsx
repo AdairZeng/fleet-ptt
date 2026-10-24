@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from '
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRenderer.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { createPortal } from 'react-dom'
 import { createDeviceModel, screenSize, screenPixels } from './model.ts'
@@ -24,7 +25,7 @@ type DeviceScene = {
   cleanup: () => void
 }
 
-const modelURL = '/models/xiaolu.glb?v=4'
+const modelURL = '/models/xiaolu.glb?v=5'
 
 export function DeviceShell({ children, status, onAction = () => {}, phase = 'standby', indicator }: DeviceShellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -165,8 +166,8 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
     <div className="device-page">
       <header className="product-heading">
         <p className="product-eyebrow">XIAOLU</p>
-        <h1>小路，随声同行。</h1>
-        <p>你的随身语音伙伴</p>
+        <h1>随声，同行。</h1>
+        <p>小路 · 随身语音伙伴</p>
       </header>
       <section className="device-stage" aria-label="小路三维语音终端">
         <div className="device-canvas-wrap">
@@ -179,7 +180,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
             aria-label="长按1.5秒开关机"
             {...pressHandlers('power')}
           >
-            <span aria-hidden="true">⏻</span><small>长按开关</small>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v8M6.4 6.4a8 8 0 1 0 11.2 0" /></svg><small>长按开关</small>
           </button>
           <button
             type="button"
@@ -215,7 +216,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
               onPTTUp()
             }}
           >
-            <span aria-hidden="true">{pttHeld ? '●' : 'PTT'}</span><small>{pttHeld ? '松开结束' : '按住说话'}</small>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3" /><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6" /></svg><small>{pttHeld ? '松开结束' : '按住说话'}</small>
           </button>
         </div>
         {createPortal(
@@ -244,6 +245,13 @@ function createScene(
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.05
   const scene = new THREE.Scene()
+  const studio = new RoomEnvironment()
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  const environment = pmrem.fromScene(studio, 0.04)
+  scene.environment = environment.texture
+  scene.environmentIntensity = 0.9
+  studio.dispose()
+  pmrem.dispose()
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100)
   const fixedView = window.matchMedia('(max-width: 704px), (pointer: coarse)')
   const orbit = new OrbitControls(camera, canvas)
@@ -254,17 +262,17 @@ function createScene(
   orbit.maxPolarAngle = Math.PI * 2 / 3
   const reset = () => {
     const distance = Math.max(7.5, 1.38 / (Math.tan(THREE.MathUtils.degToRad(16)) * camera.aspect))
-    camera.position.set(distance * 0.085, 0.16, distance)
+    camera.position.set(distance * (fixedView.matches ? 0.04 : 0.16), 0.12, distance)
     orbit.enabled = !fixedView.matches
     orbit.update()
   }
   reset()
   fixedView.addEventListener('change', reset)
-  scene.add(new THREE.HemisphereLight(0xf2f5ff, 0x6e7b8b, 3.1))
-  const light = new THREE.DirectionalLight(0xffffff, 2.8)
+  scene.add(new THREE.HemisphereLight(0xfffaf2, 0x7b8490, 1.4))
+  const light = new THREE.DirectionalLight(0xfffaf4, 2.1)
   light.position.set(-3, 5, 5)
   scene.add(light)
-  const rim = new THREE.DirectionalLight(0xcce7ff, 2.4)
+  const rim = new THREE.DirectionalLight(0xdceaff, 1.5)
   rim.position.set(3, 1, -2)
   scene.add(rim)
 
@@ -352,10 +360,10 @@ function createScene(
     }
     const lamp = model.getObjectByName('indicator')
     if (lamp instanceof THREE.Mesh && lamp.material instanceof THREE.MeshStandardMaterial) {
-      const color = { off: 0x334155, blue: 0x38bdf8, amber: 0xfbbf24, red: 0xf87171 }[indicator]
+      const color = { off: 0x788581, blue: 0x9bcbd3, amber: 0xfbbf24, red: 0xf87171 }[indicator]
       lamp.material.color.setHex(color)
       lamp.material.emissive.setHex(color)
-      lamp.material.emissiveIntensity = indicator === 'off' ? 0 : 0.8
+      lamp.material.emissiveIntensity = indicator === 'off' ? 0 : 0.5
     }
     const front = camera.position.z > screenSize.z
     screenElement.style.visibility = front ? 'visible' : 'hidden'
@@ -376,6 +384,7 @@ function createScene(
       orbit.dispose()
       cssScene.remove(screen)
       cssRenderer.domElement.remove()
+      environment.dispose()
       renderer.dispose()
       disposeModel(model)
     },

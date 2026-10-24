@@ -212,11 +212,8 @@ func TestMCPNotShadowedByStatic(t *testing.T) {
 	}
 	users, channels := testDeps(t)
 	h := newHandler(dir, users, channels, rtn.Signer{}, "linx-test-token", "test-agent")
-	for _, path := range []string{"/api/v1/mcp", "/api/v1/mcp/message"} {
-		method := http.MethodGet
-		if strings.HasSuffix(path, "message") {
-			method = http.MethodPost
-		}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+		path := "/api/v1/mcp"
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 		if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "home") {

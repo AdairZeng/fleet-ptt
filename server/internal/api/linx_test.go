@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -9,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 )
@@ -32,61 +30,40 @@ func (r mcpReply) text() string {
 }
 
 type mcpClient struct {
-	t        *testing.T
-	srv      *httptest.Server
-	endpoint string
-	headers  http.Header
-	events   chan string
-	id       int
+	t       *testing.T
+	srv     *httptest.Server
+	headers http.Header
+	id      int
 }
 
 func newMCPClient(t *testing.T, srv *httptest.Server, device, session string) *mcpClient {
 	t.Helper()
-	c := &mcpClient{t: t, srv: srv, headers: make(http.Header), events: make(chan string, 16)}
+	c := &mcpClient{t: t, srv: srv, headers: make(http.Header)}
 	c.headers.Set("Authorization", "Bearer linx-test-token")
 	c.headers.Set("X-Linx-Device-Id", device)
 	c.headers.Set("X-Linx-Agent-Id", "test-agent")
 	c.headers.Set("X-Linx-Session-Id", session)
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/mcp", nil)
-	req.Header = c.headers.Clone()
-	res, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
+	c.headers.Set("Accept", "application/json, text/event-stream")
+	c.headers.Set("MCP-Protocol-Version", "2025-06-18")
+	c.rpc("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "test", "version": "1"}})
+	if c.headers.Get("Mcp-Session-Id") == "" {
+		t.Fatal("missing transport session")
 	}
-	if res.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(res.Body)
-		res.Body.Close()
-		t.Fatalf("SSE %d %s", res.StatusCode, b)
-	}
-	t.Cleanup(func() { res.Body.Close() })
-	go func() {
-		defer close(c.events)
-		scan := bufio.NewScanner(res.Body)
-		for scan.Scan() {
-			if data, ok := strings.CutPrefix(scan.Text(), "data: "); ok {
-				c.events <- data
-			}
+	c.post(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, http.StatusAccepted)
+	t.Cleanup(func() {
+		req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/mcp", nil)
+		req.Header = c.headers.Clone()
+		res, err := srv.Client().Do(req)
+		if err == nil {
+			res.Body.Close()
 		}
-	}()
-	c.endpoint = c.next()
-	c.rpc("initialize", map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "test", "version": "1"}})
-	c.post(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	})
 	return c
 }
-func (c *mcpClient) next() string {
-	c.t.Helper()
-	select {
-	case ev := <-c.events:
-		return ev
-	case <-time.After(5 * time.Second):
-		c.t.Fatal("MCP response timed out")
-		return ""
-	}
-}
-func (c *mcpClient) post(body any) {
+func (c *mcpClient) post(body any, status int) []byte {
 	c.t.Helper()
 	b, _ := json.Marshal(body)
-	req, _ := http.NewRequest(http.MethodPost, c.srv.URL+c.endpoint, bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, c.srv.URL+"/api/v1/mcp", bytes.NewReader(b))
 	req.Header = c.headers.Clone()
 	req.Header.Set("Content-Type", "application/json")
 	res, err := c.srv.Client().Do(req)
@@ -94,17 +71,27 @@ func (c *mcpClient) post(body any) {
 		c.t.Fatal(err)
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusAccepted {
-		b, _ := io.ReadAll(res.Body)
-		c.t.Fatalf("POST %d %s", res.StatusCode, b)
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		c.t.Fatal(err)
 	}
+	if res.StatusCode != status {
+		c.t.Fatalf("POST %d %s", res.StatusCode, data)
+	}
+	if session := res.Header.Get("Mcp-Session-Id"); session != "" {
+		c.headers.Set("Mcp-Session-Id", session)
+	}
+	if status == http.StatusOK && !strings.HasPrefix(res.Header.Get("Content-Type"), "application/json") {
+		c.t.Fatal("expected JSON response")
+	}
+	return data
 }
 func (c *mcpClient) rpc(method string, params any) mcpReply {
 	c.t.Helper()
 	c.id++
-	c.post(map[string]any{"jsonrpc": "2.0", "id": c.id, "method": method, "params": params})
+	data := c.post(map[string]any{"jsonrpc": "2.0", "id": c.id, "method": method, "params": params}, http.StatusOK)
 	var result mcpReply
-	if err := json.Unmarshal([]byte(c.next()), &result); err != nil {
+	if err := json.Unmarshal(data, &result); err != nil {
 		c.t.Fatal(err)
 	}
 	return result

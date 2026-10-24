@@ -61,10 +61,18 @@ function environment() {
     constructor(init: { output: (audio: object) => void }) { this.output = init.output }
     configure() {}
     close() { this.state = 'closed' }
-    decode() { this.output({ numberOfChannels: 1, numberOfFrames: 960, sampleRate: 16000, copyTo() {}, close() {} }) }
+    decode(chunk: { type: string }) {
+      // WebCodecs requires every Opus packet to be a key chunk.
+      if (chunk.type !== 'key') throw new DOMException('A key frame is required after configure()', 'DataError')
+      this.output({ numberOfChannels: 1, numberOfFrames: 960, sampleRate: 16000, copyTo() {}, close() {} })
+    }
     flush() { return new Promise<void>((resolve) => { finishFlush = resolve }) }
   }
-  const globals = { WebSocket: Socket, AudioContext: Context, AudioDecoder: Decoder, EncodedAudioChunk: class {}, location: { protocol: 'http:', host: 'localhost' }, navigator: { mediaDevices: { getUserMedia: () => getMedia() } }, document: doc }
+  class Chunk {
+    readonly type: string
+    constructor(init: { type: string }) { this.type = init.type }
+  }
+  const globals = { WebSocket: Socket, AudioContext: Context, AudioDecoder: Decoder, EncodedAudioChunk: Chunk, location: { protocol: 'http:', host: 'localhost' }, navigator: { mediaDevices: { getUserMedia: () => getMedia() } }, document: doc }
   const original = new Map<string, PropertyDescriptor | undefined>()
   for (const [name, value] of Object.entries(globals)) {
     original.set(name, Object.getOwnPropertyDescriptor(globalThis, name))

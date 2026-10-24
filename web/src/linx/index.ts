@@ -349,7 +349,8 @@ export class LinxDevice {
       }
     }
     try {
-      this.decoder.decode(new EncodedAudioChunk({ type: 'delta', timestamp: Math.round(this.playbackTime * 1_000_000), duration: 60_000, data: payload }))
+      // Every Opus packet is a key chunk, including the first after configure().
+      this.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: Math.round(this.playbackTime * 1_000_000), duration: 60_000, data: payload }))
     } catch {
       this.stop()
       this.handlers.onEvent?.({ type: 'error', text: 'TTS 解码失败' })

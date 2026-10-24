@@ -30,7 +30,7 @@ type User struct {
 type Device struct {
 	DeviceID       string
 	UserID         string
-	LinxDeviceID   string
+	MacID          string
 	CredentialHash string
 	BoundAt        time.Time
 	LastConnected  time.Time
@@ -41,7 +41,7 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open 打开（必要时创建）数据库并迁移表结构。
+// Open 打开（必要时创建）使用当前版本表结构的数据库。
 // 表对应技术方案 §4.1：users、channels、memberships、user_session。
 func Open(path string) (*Store, error) {
 	if path == "" {
@@ -107,29 +107,31 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS devices (
 			device_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
-			linx_device_id TEXT NOT NULL DEFAULT '',
+			mac_id TEXT NOT NULL DEFAULT '',
 			credential_hash TEXT NOT NULL DEFAULT '',
 			bound_at INTEGER NOT NULL,
 			last_connected INTEGER NOT NULL
 		)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS devices_linx_id ON devices(linx_device_id) WHERE linx_device_id <> ''`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
 	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS devices_mac_id ON devices(mac_id) WHERE mac_id <> ''`); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (s *Store) DeviceByID(ctx context.Context, deviceID string) (Device, error) {
-	return scanDevice(s.db.QueryRowContext(ctx, `SELECT device_id, user_id, linx_device_id, credential_hash, bound_at, last_connected FROM devices WHERE device_id = ?`, deviceID))
+	return scanDevice(s.db.QueryRowContext(ctx, `SELECT device_id, user_id, mac_id, credential_hash, bound_at, last_connected FROM devices WHERE device_id = ?`, deviceID))
 }
 
 func scanDevice(row *sql.Row) (Device, error) {
 	var d Device
 	var bound, connected int64
-	err := row.Scan(&d.DeviceID, &d.UserID, &d.LinxDeviceID, &d.CredentialHash, &bound, &connected)
+	err := row.Scan(&d.DeviceID, &d.UserID, &d.MacID, &d.CredentialHash, &bound, &connected)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Device{}, ErrNotFound
 	}

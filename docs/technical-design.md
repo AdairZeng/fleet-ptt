@@ -193,7 +193,7 @@ sequenceDiagram
 |------|------|------|
 | GET | `/healthz` | 进程探活 |
 | POST | `/api/v1/device/session` | 创建或恢复设备会话 |
-| POST | `/api/v1/device/bind` | 授权设备与用户绑定 |
+| POST | `/api/v1/device/register` | 创建设备身份和凭证 |
 | GET | `/api/v1/me` | 返回用户与当前频道 |
 | GET/POST | `/api/v1/channels` | 查询或创建频道 |
 | POST | `/api/v1/channels/join` | 按口令或名称入群 |
@@ -203,16 +203,16 @@ sequenceDiagram
 | POST | `/api/v1/talk/start` | 请求开始上行 |
 | POST | `/api/v1/talk/end` | 请求结束上行 |
 | POST | `/api/v1/linx/chat` | 接收灵矽 Chat SSE 意图 |
-| GET | `/api/v1/linx/ws` | 3D 原型到真实灵矽设备 WebSocket 的服务端桥接 |
-| POST | `/api/v1/linx/bind` | 开机后检查并自动完成灵矽设备绑定；支持业务会话或设备凭证认证 |
+| POST | `/api/v1/device/boot` | 设备开机认证并按 mac_id 检查/完成灵矽绑定 |
+| GET | `/api/v1/linx/ws` | 设备到真实灵矽设备 WebSocket 的服务端桥接 |
 
 ### 浏览器设备注册
 
-浏览器通过 `POST /api/v1/device/register` 获取服务端生成的设备 ID 和 256 位随机设备凭证，保存在本机。数据库只保存凭证 SHA-256 摘要。未绑定设备仅可凭该凭证向 `POST /api/v1/device/session` 提交昵称，绑定成功才签发业务会话；恢复时允许省略昵称，改昵称沿用相同用户 ID。设备 ID 本身没有认证能力，旧 `/api/v1/session` 入口也验证设备凭证。
+浏览器通过 `POST /api/v1/device/register` 获取服务端生成的 `device_id`、虚拟 `mac_id` 和 256 位随机设备凭证，保存在本机；真实硬件在预配阶段写入同样的三项字段。数据库只保存凭证 SHA-256 摘要。设备仅可凭该凭证向 `POST /api/v1/device/session` 提交昵称，绑定成功才签发业务会话；恢复时允许省略昵称，改昵称沿用相同用户 ID。设备 ID 本身没有认证能力，`/api/v1/session` 也要求设备凭证。
 
-已有浏览器使用有效 Bearer 会话调用注册接口迁移，保留用户、频道和成员关系；丢失设备凭证且没有有效会话时，不允许仅凭设备 ID 认领身份。当前浏览器原型保持用户与设备一对一，当前频道/上行状态沿用该用户的唯一会话记录。硬件预配另行实现。
+浏览器和硬件都从当前版本的设备注册/预配流程开始，不读取旧设备表字段。丢失设备凭证且没有有效会话时，不允许仅凭设备 ID 认领身份。当前原型保持用户与设备一对一，当前频道/上行状态沿用该用户的唯一会话记录。
 
-灵矽 ID 只能通过服务端授权映射维护，浏览器注册及设置接口不接受灵矽 ID。回调只通过该映射查询设备，不以应用设备 ID 自动替代灵矽 ID。
+灵矽侧使用设备的 `mac_id`。浏览器注册接口可以为模拟设备生成 `mac_id`，真实硬件在预配时写入同一字段；回调通过 `mac_id` 查询应用设备，不以应用 `device_id` 代替它。
 
 ### 8.2 设备 WebSocket
 
@@ -251,13 +251,13 @@ sequenceDiagram
 
 ### 8.4 灵矽音频接入
 
-3D 原型通过 `/api/v1/linx/ws` 连接项目服务端，服务端使用 `LINX_DEVICE_ID`、`LINX_DEVICE_TOKEN` 和 `LINX_WS_URL` 建立灵矽 WebSocket。服务端向灵矽发送 PCM `hello`，转发浏览器的 `listen start/stop` 与 16 kHz 单声道 16 bit 小端 PCM 二进制帧，并将灵矽的 STT、TTS 状态和音频帧转发给浏览器。浏览器不能设置灵矽要求的握手头，也不接触灵矽长期凭证。
+3D 原型和真实硬件都通过 `/api/v1/linx/ws` 连接项目服务端，服务端根据当前设备的 `mac_id` 获取对应灵矽 WebSocket 凭证。服务端向灵矽发送 PCM `hello`，转发设备的 `listen start/stop` 与 16 kHz 单声道 16 bit 小端 PCM 二进制帧，并将灵矽的 STT、TTS 状态和音频帧转发给设备。客户端不能设置灵矽要求的握手头，也不接触灵矽长期凭证。
 
 灵矽 Chat 模式仍会从云端向 `/api/v1/linx/chat` 发起 HTTP POST + SSE 请求；本地联调必须通过公网隧道暴露该路径。业务服务返回的 `message` 由灵矽合成 TTS，音频沿原 WebSocket 返回设备。当前桥接不把灵矽 Token 写入数据库或浏览器存储。
 
 ## 9. 安全、部署与运行约束
 
-- `SESSION_SECRET`、七牛 AK/SK、RTN AppID、`LINX_CHAT_TOKEN`、`LINX_DEVICE_ID` 和 `LINX_DEVICE_TOKEN` 只放本地 `.env` 或部署环境。
+- `SESSION_SECRET`、七牛 AK/SK、RTN AppID、`LINX_CHAT_TOKEN`、灵矽 API Key 和 Agent ID 只放本地 `.env` 或部署环境。
 - RoomToken 由 Go 短时签发，浏览器不接触七牛 SecretKey。
 - 灵矽回调校验 Bearer token、设备映射、请求类型、会话 ID 和动作权限。
 - WebSocket 仅接受有效设备会话，动作按设备定向；频道成员事件按成员关系发送。
@@ -286,9 +286,8 @@ sequenceDiagram
 | `SESSION_SECRET` | 设备/用户会话签名 |
 | `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_RTN_APP_ID` | 七牛 RTN 凭证 |
 | `LINX_CHAT_TOKEN` | 灵矽 Chat 回调校验 |
-| `LINX_API_KEY` / `LINX_AGENT_ID` | 灵矽官方设备 API 认证和智能体 ID；3D 原型按下电源键时检查并自动绑定虚拟设备 |
-| `LINX_DEVICE_ID` | 虚拟设备 MAC/伪 MAC；用于 OTA、设备绑定和 WebSocket 握手 |
-| `LINX_DEVICE_TOKEN` | 已绑定设备的 WebSocket Token；已配置时开机直接复用，未配置时由开机绑定流程获取 |
+| `LINX_API_KEY` / `LINX_AGENT_ID` | 灵矽官方设备 API 认证和智能体 ID；设备开机时检查并自动绑定当前 `mac_id` |
+| `mac_id` | 每台设备的硬件 MAC；模拟设备由服务端生成，真实硬件由工厂预配，用于 OTA、设备绑定和 WebSocket 握手 |
 | `LINX_API_BASE_URL` / `LINX_OTA_URL` | 灵矽设备 API 和 OTA 地址，默认使用官方地址 |
 | `PUBLIC_BASE_URL` | 灵矽访问本服务的公网基址 |
 

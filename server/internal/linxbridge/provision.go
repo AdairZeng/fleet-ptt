@@ -25,13 +25,13 @@ type ProvisionConfig struct {
 	ActivateURL string
 	APIKey      string
 	AgentID     string
-	DeviceID    string
+	MacID       string
 	ClientID    string
 	HTTPClient  *http.Client
 }
 
 func (c ProvisionConfig) Ready() bool {
-	return strings.TrimSpace(c.APIKey) != "" && strings.TrimSpace(c.AgentID) != "" && strings.TrimSpace(c.DeviceID) != ""
+	return strings.TrimSpace(c.APIKey) != "" && strings.TrimSpace(c.AgentID) != "" && strings.TrimSpace(c.MacID) != ""
 }
 
 type provisionResponse struct {
@@ -102,7 +102,7 @@ func Provision(ctx context.Context, cfg ProvisionConfig) (Config, error) {
 	if url == "" {
 		url = DefaultURL
 	}
-	return Config{URL: url, DeviceID: cfg.DeviceID, Token: first.WebSocket.Token}, nil
+	return Config{URL: url, DeviceID: cfg.MacID, Token: first.WebSocket.Token}, nil
 }
 
 func (c ProvisionConfig) ota(ctx context.Context) (provisionResponse, error) {
@@ -110,10 +110,10 @@ func (c ProvisionConfig) ota(ctx context.Context) (provisionResponse, error) {
 		"version": 0, "uuid": c.ClientID,
 		"application": map[string]any{"name": "fleet-ptt-3d-prototype", "version": "0.1.0", "compile_time": time.Now().UTC().Format("2006-01-02 15:04:05"), "elf_sha256": ""},
 		"ota":         map[string]string{"label": "fleet-ptt-3d-prototype"},
-		"board":       map[string]any{"type": "fleet-ptt-web", "ssid": "browser", "rssi": 0, "channel": 0, "ip": "127.0.0.1", "mac": c.DeviceID},
-		"mac_address": c.DeviceID, "flash_size": 0, "minimum_free_heap_size": 0, "chip_model_name": "", "partition_table": []any{},
+		"board":       map[string]any{"type": "fleet-ptt-device", "ssid": "fleet-ptt", "rssi": 0, "channel": 0, "ip": "127.0.0.1", "mac": c.MacID},
+		"mac_address": c.MacID, "flash_size": 0, "minimum_free_heap_size": 0, "chip_model_name": "", "partition_table": []any{},
 	}
-	return c.doJSON(ctx, http.MethodPost, c.OTAURL, map[string]string{"Activation-Version": "1", "Device-Id": c.DeviceID, "Client-Id": c.ClientID, "User-Agent": "fleet-ptt-3d-prototype/0.1.0", "Accept-Language": "zh-CN"}, body)
+	return c.doJSON(ctx, http.MethodPost, c.OTAURL, map[string]string{"Activation-Version": "1", "Device-Id": c.MacID, "Client-Id": c.ClientID, "User-Agent": "fleet-ptt-device/0.1.0", "Accept-Language": "zh-CN"}, body)
 }
 
 func (c ProvisionConfig) bind(ctx context.Context, code string) error {
@@ -136,7 +136,7 @@ func (c ProvisionConfig) activate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Device-Id", c.DeviceID)
+	request.Header.Set("Device-Id", c.MacID)
 	response, err := c.HTTPClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("灵矽设备激活失败：%w", err)

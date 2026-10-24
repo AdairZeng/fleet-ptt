@@ -137,6 +137,13 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
 	return true
 }
 
+func decodeJSONOptional(r *http.Request, dest any) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+	return json.NewDecoder(r.Body).Decode(dest)
+}
+
 func writeChannelError(w http.ResponseWriter, err error, fallback string) {
 	switch {
 	case errors.Is(err, channel.ErrInvalidName), errors.Is(err, channel.ErrInvalidJoin), errors.Is(err, channel.ErrInvalidSwitch):

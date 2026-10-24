@@ -40,7 +40,7 @@ func TestProvisionBindsActivationCodeThroughAPI(t *testing.T) {
 	defer server.Close()
 
 	got, err := Provision(context.Background(), ProvisionConfig{
-		APIBaseURL: server.URL, OTAURL: server.URL + "/ota", ActivateURL: server.URL + "/activate", APIKey: "api-key", AgentID: "agent-1", DeviceID: "02:46:50:50:54:01",
+		APIBaseURL: server.URL, OTAURL: server.URL + "/ota", ActivateURL: server.URL + "/activate", APIKey: "api-key", AgentID: "agent-1", MacID: "02:46:50:50:54:01",
 		HTTPClient: server.Client(),
 	})
 	if err != nil {

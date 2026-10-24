@@ -91,8 +91,31 @@ func TestSessionBadRequest(t *testing.T) {
 	}
 }
 
-// Existing scenario fixtures retain their legacy device labels and migrate using
-// server-side setup. Requests to the production handler always carry proof.
+func TestRegisterDeviceReturnsHardwareIdentity(t *testing.T) {
+	svc := newService(t)
+	h := newMux(svc)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/device/register", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		DeviceID   string `json:"device_id"`
+		MacID      string `json:"mac_id"`
+		Credential string `json:"device_credential"`
+	}
+	decode(t, rec, &got)
+	if got.DeviceID == "" || got.MacID == "" || len(got.Credential) != 64 {
+		t.Fatalf("unexpected device proof %+v", got)
+	}
+	device, err := svc.Store.DeviceByID(context.Background(), got.DeviceID)
+	if err != nil || device.MacID != got.MacID {
+		t.Fatalf("stored device %+v err=%v", device, err)
+	}
+}
+
+// Scenario fixtures create a new device proof before calling the production handler.
 func postSession(t *testing.T, h http.Handler, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var reqBody struct {
@@ -101,15 +124,12 @@ func postSession(t *testing.T, h http.Handler, body string) *httptest.ResponseRe
 	}
 	if json.Unmarshal([]byte(body), &reqBody) == nil && reqBody.Nickname != "" && reqBody.DeviceID != "" {
 		fixture := h.(*fixtureMux)
-		legacy, err := fixture.users.Enter(context.Background(), reqBody.Nickname, reqBody.DeviceID, time.Now())
+		owner, err := fixture.users.Enter(context.Background(), reqBody.Nickname, reqBody.DeviceID, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
-		proof, err := fixture.users.RegisterDevice(context.Background(), &legacy.User, time.Now())
+		proof, err := fixture.users.RegisterDevice(context.Background(), &owner.User, reqBody.DeviceID, time.Now())
 		if err != nil {
-			t.Fatal(err)
-		}
-		if err := fixture.users.Store.BindLinxDevice(context.Background(), proof.DeviceID, reqBody.DeviceID); err != nil {
 			t.Fatal(err)
 		}
 		raw, err := json.Marshal(map[string]string{"nickname": reqBody.Nickname, "device_id": proof.DeviceID, "device_credential": proof.Credential})

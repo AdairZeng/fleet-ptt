@@ -36,39 +36,40 @@ type Config struct {
 // only when an authenticated device asks to power on.
 type Manager struct {
 	mu        sync.RWMutex
-	config    Config
 	provision ProvisionConfig
+	configs   map[string]Config
 }
 
-func NewManager(config Config, provision ProvisionConfig) *Manager {
-	return &Manager{config: config, provision: provision}
+func NewManager(provision ProvisionConfig) *Manager {
+	return &Manager{provision: provision, configs: make(map[string]Config)}
 }
 
-func (m *Manager) Config() Config {
+func (m *Manager) Config(deviceID string) Config {
 	if m == nil {
 		return Config{}
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.config
+	return m.configs[deviceID]
 }
 
-func (m *Manager) Ensure(ctx context.Context) (Config, error) {
+func (m *Manager) Ensure(ctx context.Context, device store.Device) (Config, error) {
 	if m == nil {
 		return Config{}, errors.New("服务器未配置灵矽设备桥接")
 	}
 	m.mu.RLock()
-	current, provision := m.config, m.provision
+	current, provision := m.configs[device.DeviceID], m.provision
 	m.mu.RUnlock()
 	if current.Ready() {
 		return current, nil
 	}
+	provision.MacID = device.MacID
 	provisioned, err := Provision(ctx, provision)
 	if err != nil {
 		return Config{}, err
 	}
 	m.mu.Lock()
-	m.config = provisioned
+	m.configs[device.DeviceID] = provisioned
 	m.mu.Unlock()
 	return provisioned, nil
 }
@@ -129,11 +130,6 @@ func (w *writeConn) raw(ctx context.Context, typ websocket.MessageType, payload 
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	config := h.Bridge.Config()
-	if !config.Ready() {
-		http.Error(w, "服务器未配置灵矽设备桥接", http.StatusServiceUnavailable)
-		return
-	}
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		if scheme, value, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
@@ -145,9 +141,15 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "未登录或会话无效", http.StatusUnauthorized)
 		return
 	}
-	if err := h.bindDevice(r.Context(), u, config.DeviceID); err != nil {
-		log.Printf("linx bridge: bind device: %v", err)
-		http.Error(w, "灵矽设备未绑定当前用户", http.StatusConflict)
+	device, err := h.Users.Store.DeviceByID(r.Context(), u.DeviceID)
+	if err != nil {
+		http.Error(w, "设备不存在", http.StatusConflict)
+		return
+	}
+	config, err := h.Bridge.Ensure(r.Context(), device)
+	if err != nil {
+		log.Printf("linx bridge: provision device: %v", err)
+		http.Error(w, "灵矽设备未绑定", http.StatusBadGateway)
 		return
 	}
 	local, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -189,20 +191,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go func() { defer wg.Done(); h.remoteToLocal(ctx, remote, localWriter, cancel) }()
 	go func() { defer wg.Done(); localToRemote(ctx, local, remoteWriter, cancel) }()
 	wg.Wait()
-}
-
-func (h Handler) bindDevice(ctx context.Context, u store.User, linxDeviceID string) error {
-	current, err := h.Users.Store.UserByLinxDeviceID(ctx, linxDeviceID)
-	if err == nil {
-		if current.DeviceID != u.DeviceID {
-			return errors.New("linx device belongs to another application device")
-		}
-		return nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	return h.Users.Store.BindLinxDevice(ctx, u.DeviceID, linxDeviceID)
 }
 
 func deviceHello() hello {

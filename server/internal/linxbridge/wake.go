@@ -122,7 +122,7 @@ func hasWakePrefix(text string) bool {
 		}
 		return r
 	}, text)
-	return strings.HasPrefix(normalized, "你好小路")
+	return strings.HasPrefix(normalized, "你好小路") || strings.HasPrefix(normalized, "你好小鹿") || strings.HasPrefix(normalized, "你好小陆")
 }
 
 func (s *WakeSession) STT(text string) (WakeEvent, bool) {

@@ -99,6 +99,7 @@ func TestBridgeSuppressesAmbientResponsesAndRequiresAck(t *testing.T) {
 	send(websocket.MessageText, `{"type":"hello","session_id":"voice-1"}`)
 	read("hello", "")
 	send(websocket.MessageText, `{"type":"stt","text":"创建一个频道"}`)
+	read("wake_missed", "")
 	send(websocket.MessageText, `{"type":"tts","state":"start"}`)
 	send(websocket.MessageBinary, "ambient audio")
 	send(websocket.MessageText, `{"type":"tts","state":"stop"}`)

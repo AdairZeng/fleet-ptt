@@ -51,7 +51,9 @@ function environment() {
     async close() { this.closed = true }
     createMediaStreamSource() { return new Node() }
     createScriptProcessor() { return this.processor }
-    createBuffer() { return { duration: 0.06, copyToChannel() {} } }
+    createBuffer(_channels: number, frames: number, rate: number) {
+      return { duration: frames / rate, samples: new Float32Array(frames), copyToChannel(samples: Float32Array) { this.samples.set(samples) } }
+    }
     createBufferSource() { const source = new Source(); this.sources.push(source); return source }
   }
   let finishFlush = () => {}
@@ -286,5 +288,49 @@ test('late wake while hidden is canceled without acknowledgement or playback', a
     assert.equal(env.Context.contexts[0].sources.length, 0)
     assert.equal(env.Context.contexts[0].processor.onaudioprocess, null)
     assert.equal(isPlaybackBlocked(), false)
+  } finally { device.close(); env.restore() }
+})
+
+test('negotiated PCM plays signed little-endian samples without an Opus decoder and drains before ready', async () => {
+  const env = environment()
+  const device = new LinxDevice(session)
+  try {
+    await device.start()
+    Reflect.deleteProperty(globalThis, 'AudioDecoder')
+    const socket = env.Socket.sockets[0]
+    socket.event({ type: 'hello', session_id: 's', audio_params: { format: 'pcm', sample_rate: 16000 } })
+    socket.event({ type: 'wake', state: 'detected', turn_id: 'pcm-turn' })
+    await tick()
+    socket.event({ type: 'tts', state: 'start' })
+    socket.onmessage?.({ data: new Uint8Array([0, 128, 0, 0, 255, 127]).buffer })
+    const source = env.Context.contexts[0].sources[0]
+    const buffer = source.buffer as { samples: Float32Array; duration: number }
+    assert.deepEqual([...buffer.samples], [-1, 0, 32767 / 32768])
+    assert.equal(buffer.duration, 3 / 16000)
+    socket.event({ type: 'tts', state: 'stop' })
+    await tick()
+    assert.equal(isPlaybackBlocked(), true)
+    assert.equal(socket.sent.some((v: any) => v.state === 'playback_done'), false)
+    source.end()
+    assert.equal(isPlaybackBlocked(), false)
+    assert.ok(socket.sent.some((v: any) => v.state === 'playback_done' && v.turn_id === 'pcm-turn'))
+  } finally { device.close(); env.restore() }
+})
+
+test('malformed PCM cancels playback instead of reading an incomplete sample', async () => {
+  const env = environment()
+  const events: string[] = []
+  const device = new LinxDevice(session, { onEvent: (e) => events.push(e.type) })
+  try {
+    await device.start()
+    const socket = env.Socket.sockets[0]
+    socket.event({ type: 'hello', session_id: 's', audio_params: { format: 'pcm', sample_rate: 16000 } })
+    socket.event({ type: 'wake', state: 'detected', turn_id: 'pcm-turn' })
+    await tick()
+    socket.onmessage?.({ data: new ArrayBuffer(3) })
+    assert.ok(events.includes('error'))
+    assert.equal(env.Context.contexts[0].sources.length, 0)
+    assert.equal(isPlaybackBlocked(), false)
+    assert.ok(socket.sent.some((v: any) => v.type === 'wake' && v.state === 'cancel'))
   } finally { device.close(); env.restore() }
 })

@@ -31,6 +31,7 @@ export class LinxDevice {
   private processor: ScriptProcessorNode | null = null
   private releaseMicrophone: (() => void) | null = null
   private sessionID = ''
+  private outputFormat = 'opus'
   private outputSampleRate = 16000
   private pendingPCM = new Uint8Array(0)
   private decoder: AudioDecoder | null = null
@@ -96,13 +97,14 @@ export class LinxDevice {
       socket.onmessage = (event) => {
         if (this.socket !== socket || this.closed) return
         if (typeof event.data === 'string') {
-          let message: LinxEvent & { audio_params?: { sample_rate?: number } }
+          let message: LinxEvent & { audio_params?: { sample_rate?: number; format?: string } }
           try { message = JSON.parse(event.data) } catch {
             this.handlers.onEvent?.({ type: 'error', text: '灵汐消息格式无效' })
             return
           }
           if (message.session_id) this.sessionID = message.session_id
           if (message.type === 'hello') {
+            this.outputFormat = message.audio_params?.format ?? 'opus'
             if (message.audio_params?.sample_rate) this.outputSampleRate = message.audio_params.sample_rate
             clearTimeout(timer)
             resolve()
@@ -300,8 +302,44 @@ export class LinxDevice {
     this.send({ type: 'wake', state: 'playback_done', session_id: this.sessionID, turn_id: this.turnID })
   }
 
+  private schedulePlayback(buffer: AudioBuffer): void {
+    const context = this.audioContext!
+    const source = context.createBufferSource()
+    source.buffer = buffer
+    source.connect(context.destination)
+    this.playbackSources.add(source)
+    source.onended = () => {
+      source.disconnect()
+      this.playbackSources.delete(source)
+      if (this.playbackEnded && this.playbackSources.size === 0) { this.clearPlayback(); this.finishTurn() }
+    }
+    const start = Math.max(context.currentTime, this.playbackTime)
+    source.start(start)
+    this.playbackTime = start + buffer.duration
+  }
+
   private playTTS(payload: ArrayBuffer): void {
     this.beginPlayback()
+    this.audioContext ??= new AudioContext()
+    if (this.outputFormat === 'pcm') {
+      if (payload.byteLength === 0 || payload.byteLength % 2 !== 0) {
+        this.stop()
+        this.handlers.onEvent?.({ type: 'error', text: '灵汐 PCM 音频帧长度无效' })
+        return
+      }
+      const samples = new Float32Array(payload.byteLength / 2)
+      const pcm = new DataView(payload)
+      for (let i = 0; i < samples.length; i += 1) samples[i] = pcm.getInt16(i * 2, true) / 32768
+      const buffer = this.audioContext.createBuffer(1, samples.length, this.outputSampleRate)
+      buffer.copyToChannel(samples, 0)
+      this.schedulePlayback(buffer)
+      return
+    }
+    if (this.outputFormat !== 'opus') {
+      this.stop()
+      this.handlers.onEvent?.({ type: 'error', text: `不支持灵汐返回的音频格式：${this.outputFormat}` })
+      return
+    }
     if (typeof AudioDecoder === 'undefined' || typeof EncodedAudioChunk === 'undefined') {
       this.stop()
       this.handlers.onEvent?.({ type: 'error', text: '浏览器不支持 Opus 语音播放，请使用新版 Chrome 或 Edge' })
@@ -321,18 +359,7 @@ export class LinxDevice {
             buffer.copyToChannel(samples, channel)
           }
           audio.close()
-          const source = context.createBufferSource()
-          source.buffer = buffer
-          source.connect(context.destination)
-          this.playbackSources.add(source)
-          source.onended = () => {
-            source.disconnect()
-            this.playbackSources.delete(source)
-            if (this.playbackEnded && this.playbackSources.size === 0) { this.clearPlayback(); this.finishTurn() }
-          }
-          const start = Math.max(context.currentTime, this.playbackTime)
-          source.start(start)
-          this.playbackTime = start + buffer.duration
+          this.schedulePlayback(buffer)
         },
         error: (error) => {
           if (epoch !== this.playbackEpoch) return

@@ -10,7 +10,7 @@ func TestWakePhraseAndReadiness(t *testing.T) {
 	r := NewWakeRegistry()
 	s := r.Open("device", "session", nil, nil)
 	defer r.Close("device", s)
-	for _, text := range []string{"创建频道", "他说你好小路就能唤醒", "你好小鹿"} {
+	for _, text := range []string{"创建频道", "他说你好小路就能唤醒", "你好小度"} {
 		if _, ok := s.STT(text); ok {
 			t.Fatalf("ambient woke device: %q", text)
 		}
@@ -43,6 +43,19 @@ func TestWakePhraseAndReadiness(t *testing.T) {
 	case <-callCtx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("cancel did not cancel business context")
+	}
+}
+
+func TestWakeAcceptedTranscriptions(t *testing.T) {
+	for _, phrase := range []string{"你好小路", "你好，小鹿！", "你好小陆，开始对讲"} {
+		if !hasWakePrefix(phrase) {
+			t.Errorf("approved transcription rejected: %s", phrase)
+		}
+	}
+	for _, phrase := range []string{"你好小度", "他说你好小鹿", "你好小卢"} {
+		if hasWakePrefix(phrase) {
+			t.Errorf("unapproved transcription accepted: %s", phrase)
+		}
 	}
 }
 

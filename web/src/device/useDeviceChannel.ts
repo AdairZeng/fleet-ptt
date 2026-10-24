@@ -239,6 +239,9 @@ export function useDeviceChannel({
         if (event.type === 'stt' && event.text) {
           setVoiceNotice(`听到：${event.text}`)
         }
+        if (event.type === 'wake_missed' && event.text) {
+          setVoiceNotice(`识别到“${event.text}”，未匹配唤醒词，请说“你好小路”或按指令键`)
+        }
         if (event.type === 'wake' && event.state === 'standby') {
           commandGeneration.current += 1
           setCommanding(false)

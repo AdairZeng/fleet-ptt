@@ -255,6 +255,11 @@ func (h Handler) remoteToLocal(ctx context.Context, remote *websocket.Conn, loca
 				}
 				_, accepted := session.STT(msg.Text)
 				if !accepted {
+					if session.CaptureAllowed() {
+						if err := local.text(ctx, map[string]string{"type": "wake_missed", "text": msg.Text}); err != nil {
+							return
+						}
+					}
 					continue
 				}
 			case "tts", "sentence_start", "llm", "notify", "custom":

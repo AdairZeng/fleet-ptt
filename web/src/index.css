@@ -736,3 +736,119 @@ main > .error {
 .indicator-blue { color: #38bdf8; }
 .indicator-amber { color: #fbbf24; }
 .indicator-red { color: #f87171; }
+
+/* Device display is a fixed physical surface, independent of page theme/viewport. */
+.device-page {
+  color-scheme: dark;
+  background: radial-gradient(ellipse at 50% 20%, #163047, #080f19 70%);
+  color: #dcecf5;
+}
+.device-canvas-wrap {
+  background:
+    radial-gradient(ellipse at 50% 42%, #25425770, transparent 60%),
+    linear-gradient(#86dfff06 1px, transparent 1px),
+    linear-gradient(90deg, #86dfff06 1px, transparent 1px), #0b1420;
+  background-size: auto, 32px 32px, 32px 32px, auto;
+  border: 1px solid #7ccce51c;
+  box-shadow: inset 0 0 100px #02071080, 0 24px 70px #0005;
+  overflow: clip;
+}
+.device-screen-overlay { overflow: clip; }
+.device-model-note {
+  background: transparent;
+  color: #b7d7e5;
+  border-radius: 0;
+  padding: 8px;
+  letter-spacing: 0.13em;
+  font-size: 11px;
+}
+.device-model-note small { display: block; margin-top: 4px; font-size: 9px; color: #69899e; letter-spacing: 0.08em; }
+.device-hotspot {
+  border: 1px solid #7acfe955;
+  background: #0c2030e8;
+  color: #d1f2ff;
+  box-shadow: 0 6px 20px #0005, inset 0 1px #a7e7ff14;
+  border-radius: 9px;
+  font-size: 11px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 10px;
+}
+.device-hotspot:hover, .device-hotspot:focus-visible, .device-hotspot.held {
+  background: #16475d;
+  outline-color: #7bddff;
+}
+.device-reset.secondary { color: #a9cbdc; border-color: #3b5668; font-size: 12px; border-radius: 30px; }
+.device-screen {
+  --page: #08141e;
+  --card: #0d1e2a;
+  --line: #244454;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid #6aa5b83d;
+  border-radius: 7px;
+  background: linear-gradient(155deg, #102431, #07111b 65%);
+  color: #dbedf5;
+  font-size: 12px;
+  line-height: 1.5;
+  text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+  overflow: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #3e697a transparent;
+  box-shadow: inset 0 0 18px #0005;
+}
+.device-screen-status {
+  margin: 0 0 10px;
+  padding: 0 0 8px;
+  border-color: #294854;
+  font-size: 10px;
+  color: #8bb6c8;
+  letter-spacing: 0.02em;
+}
+.device-screen .device-indicator { width: 5px; height: 5px; margin-right: 6px; box-shadow: 0 0 8px currentColor; }
+.device-screen .talk-bar { background: transparent; gap: 8px; padding: 0; }
+.device-screen .talk-bar h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.04em; }
+.device-screen .kicker { color: #759baa; font-size: 10px; margin-bottom: 3px; }
+.device-screen .presence { font-size: 10px; padding: 2px 7px; }
+.device-screen .member-count { font-size: 10px; color: #8fb3c4; }
+.device-screen .device-identity { margin: 9px 0; color: #8bafbf; font-size: 10px; }
+.device-screen summary { cursor: pointer; min-height: 24px; display: list-item; }
+.device-screen p.meta { font-size: 10px; overflow-wrap: anywhere; }
+.device-screen .talk-stage { margin: 8px 0 10px; padding: 14px 9px; border: 1px solid #51bbd72b; border-radius: 10px; }
+.device-screen .talk-glance { font-size: 32px; font-weight: 550; letter-spacing: 0.08em; }
+.device-screen .talk-detail { font-size: 11px; margin-top: 6px; }
+.device-screen .stage-listening, .device-screen .presence-listening { background: #103440; color: #88e1ef; }
+.device-screen .stage-commanding, .device-screen .presence-commanding { background: #142e49; color: #91c9ff; }
+.device-screen .stage-talking, .device-screen .presence-talking { background: #133b35; color: #8ae6bc; }
+.device-screen .stage-offline, .device-screen .presence-offline { background: #3b2c1d; color: #efc78a; }
+.device-screen .stage-joining, .device-screen .presence-joining,
+.device-screen .stage-idle, .device-screen .presence-idle { background: #182936; color: #adc6d7; }
+.device-screen p.hint { color: #8eafbf; font-size: 10px; line-height: 1.6; }
+.device-screen p.error { color: #ffb5a6; font-size: 11px; overflow-wrap: anywhere; }
+.device-screen section { margin-top: 12px; }
+.device-screen .roster { margin-top: 9px; }
+.device-screen .roster-row { padding: 7px 9px; border: 1px solid #284352; border-radius: 7px; background: #0e202c; font-size: 12px; }
+.device-screen .roster-row.live { background: #143932; border-color: #3a7e69; }
+.device-screen .roster-live { color: #85e2b8; font-size: 10px; }
+.device-screen .talk-dock { margin: 10px 0 0; padding: 8px 0; background: transparent; border-color: #294854; }
+.device-screen .talk-dock-inner { gap: 7px; }
+.device-screen button { font-size: 11px; border-radius: 7px; padding: 8px 10px; background: #17495e; color: #d5f3ff; }
+.device-screen .ptt { font-size: 14px; min-height: 48px; background: #14566b; }
+.device-screen .ptt.talking { background: #226b50; }
+.device-screen .end, .device-screen .command { background: #213747; color: #c0dbe7; }
+.device-screen .manual-jumps { margin-top: 12px; gap: 5px; }
+.device-screen .manual-jumps a { color: #8cd8f0; border-color: #2b4c5c; font-size: 10px; padding: 4px 7px; min-height: 24px; background: #112532; }
+.device-screen .manual { font-size: 11px; }
+.device-screen .manual h2, .device-screen h2 { color: #c0dce9; font-size: 13px; }
+.device-screen .manual section, .device-screen .manual .channel-list { padding: 10px 0; border-color: #294854; }
+.device-screen input { min-width: 0; max-width: 100%; box-sizing: border-box; background: #09141e; color: #daedf6; border-color: #365665; padding: 8px; font-size: 16px; }
+.device-screen button.secondary, .device-screen .channel-list button.channel-pick { border-color: #365665; background: #122634; color: #bedce9; }
+.device-screen .channel-current { background: #15343d; color: #9be2ec; }
+.device-screen .channel-code, .device-screen .channel-badge { color: #7fb5c9; }
+.device-screen .join-code { color: #9de6f5; border-color: #376579; font-size: 20px; }
+.device-screen main { font-size: 12px; }
+.device-screen h1 { font-size: 20px; }

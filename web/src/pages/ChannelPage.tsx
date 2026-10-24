@@ -67,9 +67,10 @@ export function ChannelPage(props: DeviceChannelProps) {
         </div>
       </header>
       {me ? (
-        <p className="meta">
-          {me.nickname} 已绑定 device_id {me.device_id}
-        </p>
+        <details className="device-identity">
+          <summary>{me.nickname} · 设备信息</summary>
+          <p className="meta">设备 ID：{me.device_id}</p>
+        </details>
       ) : identityError ? (
         <p className="error">{identityError}</p>
       ) : (

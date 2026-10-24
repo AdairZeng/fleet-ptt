@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRenderer.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { createPortal } from 'react-dom'
-import { createDeviceModel, screenSize } from './model.ts'
+import { createDeviceModel, screenSize, screenPixels } from './model.ts'
 import type { DevicePhase, DeviceSnapshot } from './controller.ts'
 
 export type DeviceAction = 'power' | 'command' | 'command-cancel' | 'ptt-start' | 'ptt-end'
@@ -24,7 +24,7 @@ type DeviceScene = {
   cleanup: () => void
 }
 
-const modelURL = '/models/xiaolu.glb'
+const modelURL = '/models/xiaolu.glb?v=2'
 
 export function DeviceShell({ children, status, onAction = () => {}, phase = 'standby', indicator }: DeviceShellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -168,7 +168,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
           <canvas ref={canvasRef} aria-hidden="true" />
           <div ref={overlayRef} className="device-screen-overlay" />
           <div className="device-model-note" aria-live="polite">
-            {modelState === 'model' ? '小路设备模型' : '小路设备灰模'}
+            <span>小路 / XIAOLU</span><small>{modelState === 'loading' ? '正在加载设备' : '语音对讲终端'}</small>
           </div>
           <button
             type="button"
@@ -238,6 +238,8 @@ function createScene(
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.setClearColor(0x000000, 0)
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.2
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100)
   const fixedView = window.matchMedia('(max-width: 704px), (pointer: coarse)')
@@ -255,10 +257,13 @@ function createScene(
   }
   reset()
   fixedView.addEventListener('change', reset)
-  scene.add(new THREE.HemisphereLight(0xf6f0e6, 0x1e293b, 2.2))
+  scene.add(new THREE.HemisphereLight(0xd8efff, 0x111b2c, 2.8))
   const light = new THREE.DirectionalLight(0xffffff, 2.8)
-  light.position.set(2, 4, 4)
+  light.position.set(-3, 5, 5)
   scene.add(light)
+  const rim = new THREE.DirectionalLight(0x6adfff, 3)
+  rim.position.set(3, 1, -2)
+  scene.add(rim)
 
   let model: THREE.Object3D = createDeviceModel()
   scene.add(model)
@@ -287,13 +292,20 @@ function createScene(
   const cssRenderer = new CSS3DRenderer()
   overlay.append(cssRenderer.domElement)
   cssRenderer.domElement.style.pointerEvents = 'none'
+  // Hidden overflow can scroll on focus and offset CSS3D independently of WebGL.
+  cssRenderer.domElement.style.overflow = 'clip'
+  cssRenderer.domElement.style.position = 'absolute'
+  cssRenderer.domElement.style.inset = '0'
   const cssScene = new THREE.Scene()
   const screen = new CSS3DObject(screenElement)
-  screenElement.style.width = '240px'
-  screenElement.style.height = '320px'
+  screenElement.style.width = `${screenPixels.width}px`
+  screenElement.style.top = '0'
+  screenElement.style.left = '0'
+  screenElement.style.height = `${screenPixels.height}px`
+  screenElement.style.overflow = 'clip'
   screenElement.style.backfaceVisibility = 'hidden'
   screen.position.set(0, screenSize.y, screenSize.z)
-  screen.scale.setScalar(screenSize.width / 240)
+  screen.scale.setScalar(screenSize.width / screenPixels.width)
   cssScene.add(screen)
 
   const buttons = Object.fromEntries(['power', 'command', 'ptt'].map((key) => [

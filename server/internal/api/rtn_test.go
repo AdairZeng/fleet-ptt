@@ -179,3 +179,18 @@ func verifyRoomToken(t *testing.T, signer rtn.Signer, body tokenJSON) {
 		t.Fatalf("expire delta %d", delta)
 	}
 }
+
+func TestRoomTokenRejectsPlaceholderConfig(t *testing.T) {
+	h := newMuxWithSigner(newService(t), rtn.Signer{
+		AccessKey: "your_qiniu_access_key_here", SecretKey: "your_qiniu_secret_key_here", AppID: "your_rtn_app_id_here",
+	})
+	token := sessionToken(t, h, "诊断", "placeholder-device")
+	res := getToken(t, h, "public", token)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d", res.Code)
+	}
+	assertError(t, res, "服务器未配置七牛 RTN")
+	if strings.Contains(res.Body.String(), `"token"`) {
+		t.Fatal("placeholder token was issued")
+	}
+}

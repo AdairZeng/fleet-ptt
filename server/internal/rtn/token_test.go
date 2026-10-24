@@ -50,3 +50,16 @@ func TestSignRejectsBadInput(t *testing.T) {
 		t.Fatalf("space user err %v", err)
 	}
 }
+
+func TestSignRejectsExampleConfiguration(t *testing.T) {
+	for _, signer := range []Signer{
+		{AccessKey: "your_qiniu_access_key_here", SecretKey: "sk", AppID: "app"},
+		{AccessKey: "ak", SecretKey: "your_qiniu_secret_key_here", AppID: "app"},
+		{AccessKey: "ak", SecretKey: "sk", AppID: "your_rtn_app_id_here"},
+		{AccessKey: " ", SecretKey: "sk", AppID: "app"},
+	} {
+		if _, err := signer.Sign("public", "user-id", time.Now()); err != ErrNotConfigured {
+			t.Fatalf("expected configuration error, got %v", err)
+		}
+	}
+}

@@ -260,3 +260,11 @@ class FakeTransport implements RtnTransport {
 function track(id: string, userId: string, audio: boolean): RemoteTrack {
   return { id, userId, audio }
 }
+
+test('browser and Qiniu autoplay rejection both require a user gesture', async () => {
+  const { isPlaybackBlocked } = await import('../src/rtc/room.ts')
+  assert.equal(isPlaybackBlocked(new DOMException('blocked', 'NotAllowedError')), true)
+  assert.equal(isPlaybackBlocked(Object.assign(new Error('track play is not allowed'), { code: 21007 })), true)
+  assert.equal(isPlaybackBlocked(Object.assign(new Error('network'), { code: 21001 })), false)
+  assert.equal(isPlaybackBlocked(undefined), false)
+})

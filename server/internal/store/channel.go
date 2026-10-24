@@ -53,6 +53,24 @@ func (s *Store) CreateChannel(ctx context.Context, ch Channel, role string) erro
 	return tx.Commit()
 }
 
+// EnsureChannel creates a well-known channel once, without joining a user.
+func (s *Store) EnsureChannel(ctx context.Context, ch Channel) (Channel, error) {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO channels (id, name, join_code, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING
+		ON CONFLICT(join_code) DO NOTHING`,
+		ch.ID, ch.Name, ch.JoinCode, ch.CreatedBy, ch.CreatedAt.Unix())
+	if err != nil {
+		return Channel{}, err
+	}
+	got, err := s.ChannelByID(ctx, ch.ID)
+	if errors.Is(err, ErrNotFound) {
+		return Channel{}, ErrJoinCodeTaken
+	}
+	return got, err
+}
+
 // ChannelByJoinCode 按已规范化的口令精确查找。
 func (s *Store) ChannelByJoinCode(ctx context.Context, code string) (Channel, error) {
 	const q = `SELECT id, name, join_code, created_by, created_at FROM channels WHERE join_code = ?`

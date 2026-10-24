@@ -126,7 +126,13 @@ func TestLinxMCPBusinessFlow(t *testing.T) {
 	driver := newMCPClient(t, srv, "driver-mac", "voice-driver")
 	requireAnswer(t, captain.call("create_channel", map[string]any{"name": "装货"}), "已创建装货")
 	captainBox.wait(t, 3)
-	loading := captainBox.snapshot()[0]
+	var loading wsEvent
+	for _, event := range captainBox.snapshot() {
+		if event.Type == "channel_created" {
+			loading = event
+			break
+		}
+	}
 	requireAnswer(t, driver.call("join_channel", map[string]any{"code": loading.JoinCode}), "请说确认加入或取消")
 	if strings.Contains(getAuth(t, h, "/api/v1/me", driverToken).Body.String(), loading.ChannelID) {
 		t.Fatal("joined before confirmation")
@@ -230,7 +236,7 @@ func TestLinxMCPRejectsInvalidTools(t *testing.T) {
 	if !r.Result.IsError {
 		t.Fatalf("offline action reported success: %+v", r)
 	}
-	if strings.Contains(getAuth(t, h, "/api/v1/me", token).Body.String(), "channel_id") {
+	if !strings.Contains(getAuth(t, h, "/api/v1/me", token).Body.String(), `"channel_id":"public"`) {
 		t.Fatal("invalid args changed channel")
 	}
 }
@@ -265,7 +271,7 @@ func TestLinxMCPRequiresAcknowledgedVoiceWake(t *testing.T) {
 	if !result.Result.IsError {
 		t.Fatal("unawake tool succeeded")
 	}
-	if strings.Contains(getAuth(t, h, "/api/v1/me", token).Body.String(), "channel_id") {
+	if !strings.Contains(getAuth(t, h, "/api/v1/me", token).Body.String(), `"channel_id":"public"`) {
 		t.Fatal("unawake call changed channel")
 	}
 	s := armMCP(t, h, "captain-mac", "voice-1")

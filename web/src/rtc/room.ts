@@ -1,6 +1,12 @@
 // 进房只订阅。startPublish 才采集并推麦克风，stopPublish / leave 会停上行。
 export type PublishResult = 'published' | 'cancelled'
 
+// QN wraps the browser's NotAllowedError as SDK error 21007.
+export function isPlaybackBlocked(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  return ('name' in error && error.name === 'NotAllowedError') || ('code' in error && error.code === 21007)
+}
+
 export type RemoteTrack = {
   id: string
   userId: string

@@ -132,3 +132,56 @@ func TestBridgeSuppressesAmbientResponsesAndRequiresAck(t *testing.T) {
 		t.Fatal("followup microphone suppressed")
 	}
 }
+
+func TestInvitationUsesOfficialDetectSpeechEnvelope(t *testing.T) {
+	upstream, remote := socketPair(t)
+	browser, local := socketPair(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	registry := NewWakeRegistry()
+	state := &bridgeWake{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Handler{Wake: registry}.remoteToLocal(ctx, remote, &writeConn{c: local}, cancel, "device", state, &writeConn{c: remote})
+	}()
+	defer func() { cancel(); <-done; registry.Close("device", state.get()) }()
+	if err := upstream.Write(ctx, websocket.MessageText, []byte(`{"type":"hello","session_id":"voice-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := browser.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	announced := make(chan error, 1)
+	go func() {
+		announced <- registry.Announce(ctx, "device", "老王邀请你加入装货，请说接受或拒绝。")
+	}()
+	_, payload, err := browser.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event WakeEvent
+	if json.Unmarshal(payload, &event) != nil || event.State != "detected" {
+		t.Fatalf("bad event: %s", payload)
+	}
+	state.get().Control("ready", event.TurnID)
+	for _, kind := range []string{"abort", "listen"} {
+		_, payload, err = upstream.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var message map[string]string
+		if json.Unmarshal(payload, &message) != nil || message["type"] != kind || message["session_id"] != "voice-1" {
+			t.Fatalf("bad upstream message: %s", payload)
+		}
+		if kind == "listen" && (message["state"] != "detect" || message["text_response"] != "老王邀请你加入装货，请说接受或拒绝。") {
+			t.Fatalf("bad speech envelope: %s", payload)
+		}
+	}
+	if err = <-announced; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = registry.Authorize(ctx, "device", "voice-1"); err == nil {
+		t.Fatal("announcement must not authorize a tool")
+	}
+}

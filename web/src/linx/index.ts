@@ -119,7 +119,17 @@ export class LinxDevice {
     return this.connection
   }
 
+  // Call synchronously from a gesture, even if an earlier resume is still pending.
+  unlockAudio(): void {
+    if (this.closed) return
+    this.audioContext ??= new AudioContext()
+    void this.audioContext.resume().catch((error: unknown) => {
+      if (!this.closed) this.handlers.onEvent?.({ type: 'error', text: error instanceof Error ? error.message : '请点击指令键开启声音' })
+    })
+  }
+
   start(): Promise<void> {
+    this.unlockAudio()
     if (this.starting) return this.starting
     if (this.processor && !document.hidden && this.socket?.readyState === WebSocket.OPEN) {
       this.handlers.onEvent?.({ type: 'ready' })
@@ -138,13 +148,19 @@ export class LinxDevice {
     }
     if (document.hidden) { this.handlers.onEvent?.({ type: 'suspended' }); return }
     this.audioContext ??= new AudioContext()
-    await this.audioContext.resume()
-    if (this.closed || generation !== this.generation) return
-    await this.connect()
-    if (this.closed || generation !== this.generation) return
+    // Permission must not wait for gesture-gated playback or the remote handshake.
     const lease = await acquireMicrophone()
     if (this.closed || generation !== this.generation) { lease.release(); return }
     this.releaseMicrophone = lease.release
+    try {
+      await this.audioContext.resume()
+      if (this.closed || generation !== this.generation) return
+      await this.connect()
+    } catch (error) {
+      this.releaseCapture()
+      throw error
+    }
+    if (this.closed || generation !== this.generation) return
     this.source = this.audioContext.createMediaStreamSource(lease.stream)
     this.processor = this.audioContext.createScriptProcessor(2048, 1, 1)
     this.processor.onaudioprocess = (event) => {

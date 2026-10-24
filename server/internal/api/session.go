@@ -27,10 +27,12 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	if bridge != nil {
 		wake = bridge.Wake
 	}
-	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
+	hub.SetInvitationNotifier(wake.Announce)
+	mux.HandleFunc("POST /api/v1/session", CreateSession(users, channels, hub))
 	mux.HandleFunc("POST /api/v1/device/register", RegisterDevice(users))
-	mux.HandleFunc("POST /api/v1/device/boot", DeviceBoot(users, bridge))
-	mux.HandleFunc("POST /api/v1/device/session", CreateDeviceSession(users))
+	mux.HandleFunc("POST /api/v1/device/boot", DeviceBoot(users, bridge, hub))
+	mux.HandleFunc("POST /api/v1/device/session", CreateDeviceSession(users, channels, hub))
+	registerInvitations(mux, users, hub)
 	mux.HandleFunc("GET /api/v1/me", Me(users, channels))
 	mux.HandleFunc("GET /api/v1/channels", ListChannels(users, channels))
 	mux.HandleFunc("POST /api/v1/channels", CreateChannel(users, hub))
@@ -47,7 +49,9 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。
 // CreateSession keeps the endpoint but requires the same device proof as device/session.
-func CreateSession(svc *user.Service) http.HandlerFunc { return CreateDeviceSession(svc) }
+func CreateSession(svc *user.Service, channels *channel.Service, hub *ws.Hub) http.HandlerFunc {
+	return CreateDeviceSession(svc, channels, hub)
+}
 
 func RegisterDevice(svc *user.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +76,7 @@ func RegisterDevice(svc *user.Service) http.HandlerFunc {
 	}
 }
 
-func DeviceBoot(svc *user.Service, bridge *linxbridge.Manager) http.HandlerFunc {
+func DeviceBoot(svc *user.Service, bridge *linxbridge.Manager, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var device store.Device
 		if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
@@ -104,11 +108,18 @@ func DeviceBoot(svc *user.Service, bridge *linxbridge.Manager) http.HandlerFunc 
 			writeJSON(w, http.StatusBadGateway, errorBody("灵矽设备绑定失败"))
 			return
 		}
+		if device.UserID != "" {
+			if _, err := hub.BootPublic(r.Context(), device.UserID, time.Now()); err != nil {
+				log.Printf("device boot default channel: %v", err)
+				writeJSON(w, http.StatusInternalServerError, errorBody("进入公共频道失败"))
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"bound": true, "device_id": device.DeviceID, "mac_id": device.MacID, "websocket_url": config.URL})
 	}
 }
 
-func CreateDeviceSession(svc *user.Service) http.HandlerFunc {
+func CreateDeviceSession(svc *user.Service, channels *channel.Service, hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Nickname   string `json:"nickname"`
@@ -121,6 +132,17 @@ func CreateDeviceSession(svc *user.Service) http.HandlerFunc {
 		sess, err := svc.DeviceSession(r.Context(), req.Nickname, req.DeviceID, req.Credential, time.Now())
 		if err != nil {
 			writeEnterError(w, err)
+			return
+		}
+		if _, err := channels.Current(r.Context(), sess.User.ID); errors.Is(err, channel.ErrNoCurrent) {
+			if _, err := hub.BootPublic(r.Context(), sess.User.ID, time.Now()); err != nil {
+				log.Printf("device session default channel: %v", err)
+				writeJSON(w, http.StatusInternalServerError, errorBody("进入公共频道失败"))
+				return
+			}
+		} else if err != nil {
+			log.Printf("device session current channel: %v", err)
+			writeJSON(w, http.StatusInternalServerError, errorBody("读取当前频道失败"))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{

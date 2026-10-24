@@ -36,7 +36,7 @@ func TestCaptainCreatesAndDriverJoins(t *testing.T) {
 	before := getAuth(t, h, "/api/v1/me", driver)
 	var driverBefore meJSON
 	decode(t, before, &driverBefore)
-	if driverBefore.Channel != nil {
+	if driverBefore.Channel == nil || driverBefore.Channel.ChannelID != "public" {
 		t.Fatalf("driver already in %+v", driverBefore.Channel)
 	}
 
@@ -54,7 +54,7 @@ func TestCaptainCreatesAndDriverJoins(t *testing.T) {
 	stillOut := getAuth(t, h, "/api/v1/me", driver)
 	var driverStill meJSON
 	decode(t, stillOut, &driverStill)
-	if driverStill.Channel != nil {
+	if driverStill.Channel == nil || driverStill.Channel.ChannelID != "public" {
 		t.Fatalf("wrong code joined %+v", driverStill.Channel)
 	}
 
@@ -149,7 +149,7 @@ func TestListAndSwitchCurrent(t *testing.T) {
 		Channels []channelJSON `json:"channels"`
 	}
 	decode(t, empty, &listed)
-	if len(listed.Channels) != 0 {
+	if len(listed.Channels) != 1 || listed.Channels[0].ChannelID != "public" {
 		t.Fatalf("empty %#v", listed.Channels)
 	}
 
@@ -166,7 +166,7 @@ func TestListAndSwitchCurrent(t *testing.T) {
 
 	mine := getAuth(t, h, "/api/v1/channels", driver)
 	decode(t, mine, &listed)
-	if len(listed.Channels) != 2 || listed.Channels[0].ChannelID != loading.ChannelID || listed.Channels[0].Name != "装货" || listed.Channels[0].Role != "member" || listed.Channels[1].ChannelID != unloading.ChannelID || listed.Channels[1].JoinCode != unloading.JoinCode {
+	if len(listed.Channels) != 3 || listed.Channels[0].ChannelID != "public" || listed.Channels[1].ChannelID != loading.ChannelID || listed.Channels[1].Name != "装货" || listed.Channels[1].Role != "member" || listed.Channels[2].ChannelID != unloading.ChannelID || listed.Channels[2].JoinCode != unloading.JoinCode {
 		t.Fatalf("list %+v", listed.Channels)
 	}
 

@@ -14,7 +14,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-func TestTalkHTTPRequiresSessionAndChannel(t *testing.T) {
+func TestTalkHTTPRequiresSessionAndStartsInPublic(t *testing.T) {
 	h := newMux(newService(t))
 	for _, path := range []string{"/api/v1/talk/start", "/api/v1/talk/end"} {
 		res := postAuth(t, h, path, "", `{}`)
@@ -25,15 +25,16 @@ func TestTalkHTTPRequiresSessionAndChannel(t *testing.T) {
 
 	token := sessionToken(t, h, "队长", "device-captain")
 	res := postAuth(t, h, "/api/v1/talk/start", token, `{}`)
-	if res.Code != http.StatusBadRequest {
+	if res.Code != http.StatusOK {
 		t.Fatalf("start status %d body %s", res.Code, res.Body)
 	}
 	var body struct {
-		Error string `json:"error"`
+		ChannelID string `json:"channel_id"`
+		Talking   bool   `json:"talking"`
 	}
 	decode(t, res, &body)
-	if body.Error != "没有当前频道" {
-		t.Fatalf("error %q", body.Error)
+	if body.ChannelID != "public" || !body.Talking {
+		t.Fatalf("start public %+v", body)
 	}
 }
 
@@ -60,6 +61,12 @@ func TestWebSocketAuth(t *testing.T) {
 
 	token, _ := sessionPair(t, h, "队长", "device-captain")
 	conn := dialWS(t, srv, token, true)
+	if ev := readWS(t, conn); ev.Type != "channel_state" || ev.ChannelID != "public" {
+		t.Fatalf("default state %#v", ev)
+	}
+	if ev := readWS(t, conn); ev.Type != "members" {
+		t.Fatalf("members %#v", ev)
+	}
 	writeWS(t, conn, `{"type":"ping"}`)
 	ev := readWS(t, conn)
 	if ev.Type != "pong" {
@@ -76,9 +83,10 @@ func TestWebSocketAuth(t *testing.T) {
 		t.Fatalf("bad json %#v", ev)
 	}
 	writeWS(t, conn, `{"type":"talk_end"}`)
+	writeWS(t, conn, `{"type":"ping"}`)
 	ev = readWS(t, conn)
-	if ev.Type != "error" || ev.Message != "没有当前频道" {
-		t.Fatalf("talk_end %#v", ev)
+	if ev.Type != "pong" {
+		t.Fatalf("idle talk_end should be a no-op: %#v", ev)
 	}
 }
 
@@ -109,6 +117,7 @@ func TestTalkFanout(t *testing.T) {
 	collectWS(t, captain)
 	outsider := dialWS(t, srv, outsiderToken, false)
 	outsiderBox := collectWS(t, outsider)
+	outsiderBox.wait(t, 1)
 
 	res := postAuth(t, h, "/api/v1/talk/start", captainToken, `{}`)
 	if res.Code != http.StatusOK {
@@ -135,7 +144,7 @@ func TestTalkFanout(t *testing.T) {
 	if hasMember(membersEv, driverID, "司机乙", true) {
 		t.Fatalf("driver marked talking %#v", membersEv.Members)
 	}
-	if time.Sleep(150 * time.Millisecond); len(outsiderBox.snapshot()) != 0 {
+	if time.Sleep(150 * time.Millisecond); len(outsiderBox.snapshot()) != 1 {
 		t.Fatalf("outsider saw %#v", outsiderBox.snapshot())
 	}
 
@@ -210,8 +219,15 @@ func TestChannelSignals(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	captainToken, captainID := sessionPair(t, h, "队长", "device-captain")
-	driverToken, _ := sessionPair(t, h, "司机乙", "device-driver")
+	driverToken, driverID := sessionPair(t, h, "司机乙", "device-driver")
 	conn := dialWS(t, srv, captainToken, false)
+	if state := readWS(t, conn); state.Type != "channel_state" || state.ChannelID != "public" {
+		t.Fatalf("initial public state %#v", state)
+	}
+	if members := readWS(t, conn); members.Type != "members" || members.ChannelID != "public" ||
+		!hasMember(members, captainID, "队长", false) || !hasMember(members, driverID, "司机乙", false) {
+		t.Fatalf("initial public members %#v", members)
+	}
 	box := collectWS(t, conn)
 
 	created := createChannel(t, h, captainToken, "装货")

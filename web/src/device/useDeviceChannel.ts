@@ -5,6 +5,7 @@ import type { DeviceAction } from './DeviceShell.tsx'
 import type { DeviceEvent } from './controller.ts'
 import type { RoomSnapshot } from './useDeviceTalk.ts'
 import { LinxDevice } from '../linx/index.ts'
+import { readInvitation } from '../state/invitations.ts'
 import { useChannelSignaling } from '../signaling/useChannelSignaling.ts'
 import {
   createChannel,
@@ -85,6 +86,7 @@ export function useDeviceChannel({
   const [switchError, setSwitchError] = useState('')
   const [switchNotice, setSwitchNotice] = useState('')
   const [voiceNotice, setVoiceNotice] = useState('')
+  const [wakeMissed, setWakeMissed] = useState('')
   const [commanding, setCommanding] = useState(false)
   const [arming, setArming] = useState(false)
   const [voiceReady, setVoiceReady] = useState(false)
@@ -240,7 +242,7 @@ export function useDeviceChannel({
           setVoiceNotice(`听到：${event.text}`)
         }
         if (event.type === 'wake_missed' && event.text) {
-          setVoiceNotice(`识别到“${event.text}”，未匹配唤醒词，请说“你好小路”或按指令键`)
+          setWakeMissed(event.text)
         }
         if (event.type === 'wake' && event.state === 'standby') {
           commandGeneration.current += 1
@@ -291,7 +293,12 @@ export function useDeviceChannel({
       requireActive()
       if (switchingRef.current && action.action !== 'talk_end') throw new Error('正在切换频道')
       if (signal.aborted) throw new Error('动作已取消')
-      if (action.action === 'talk_end') {
+      if (action.action === 'announce_invitation') {
+        const invitation = readInvitation(JSON.parse(action.value || 'null'))
+        if (!invitation || invitation.recipient_id !== session.user_id) throw new Error('邀请无效')
+        if (document.hidden || !voiceReady) throw new Error('设备语音未就绪，请保持页面前台')
+        setVoiceNotice(`${invitation.sender_name}邀请你加入${invitation.channel_name}，请说接受或拒绝`)
+      } else if (action.action === 'talk_end') {
         await stopUplinkRef.current()
       } else if (action.action === 'talk_start') {
         if (!channel || action.channel_id !== channel.channel_id || busy) throw new Error('设备尚未准备好发送')
@@ -307,6 +314,8 @@ export function useDeviceChannel({
         if (!inviteRef.current || action.channel_id !== channel?.channel_id) throw new Error('当前频道二维码未就绪')
         const qr = inviteRef.current.querySelector('img')
         if (!qr?.complete || qr.naturalWidth === 0) throw new Error('二维码尚未生成')
+        const menu = inviteRef.current.closest('details')
+        if (menu) menu.open = true
         inviteRef.current.scrollIntoView({ block: 'center' })
       } else if (action.action === 'set_nickname') {
         const profile = await fetchMe(session)
@@ -463,6 +472,7 @@ export function useDeviceChannel({
   }
 
   async function onCommand() {
+    linxRef.current?.unlockAudio()
     feedback.stop()
     const generation = ++commandGeneration.current
     const next = commandToggle(commanding || voiceProcessing || voicePlaying)
@@ -563,6 +573,7 @@ export function useDeviceChannel({
     switchError,
     switchNotice,
     voiceNotice,
+    wakeMissed,
     room,
     volumeControl,
     volume: ducking ? volume * 0.2 : volume,

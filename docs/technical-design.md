@@ -15,7 +15,7 @@
 | 部署 | Docker Compose，`make up` 一键启动 |
 | 最终硬件 | 继承按键语义、屏幕状态、业务协议和音频路由 |
 
-包含：昵称初始化、语音建群、口令确认入群、语音切群、上一频道、语音开始/结束对讲、PTT 兜底、成员状态、音量调整、口令播报、二维码展示和异常反馈。
+包含：昵称初始化、开机自动收听公共频道、跨频道在线联系人、语音建频道并定向邀请、接受/拒绝邀请、语音建群、口令确认入群、语音切群、上一频道、语音开始/结束对讲、PTT 兜底、成员状态、音量调整、口令播报、二维码展示和异常反馈。
 
 不包含：开放域闲聊、地图、IM、支付、组织后台、全程 VOX 自动上麦、制造级 CAD、量产固件和续航结论。
 
@@ -54,24 +54,24 @@ flowchart TB
 
 ## 3. 设备形态与 3D 资产
 
-设备采用短天线、竖屏、大侧键的车队对讲机形态，黑灰机身配橙色 PTT。概念尺寸约 125 × 58 × 32 mm，天线约 45 mm；尺寸用于交互比例，最终结构由器件和声学设计决定。
+设备采用钛银薄型一体化圆角机身与黑玻璃正面的智能语音终端形态。天线内置、无凸出侧键；正面下方的三个齐平控制区保留现有操作契约。模型用于交互与视觉比例，最终结构由器件、射频和声学设计决定。
 
 | 部件 | 位置与作用 |
 |------|------------|
-| 电源键 | 顶部，长按开关机 |
-| 指令/结束键 | 侧面，唤醒、结束采集、取消或强制停机 |
-| PTT | 侧面握持区，按住讲、松开停 |
+| 电源键 | 正面下方右侧，长按开关机 |
+| 指令/结束键 | 正面下方中央，唤醒、结束采集、取消或强制停机 |
+| PTT | 正面下方左侧，按住讲、松开停 |
 | 屏幕 | 正面，显示业务状态与确认内容 |
-| 状态灯 | 正面顶部，显示收听、指令、发送和异常 |
-| 扬声器 | 正面下部，播放远端语音、TTS 和提示音 |
+| 状态灯 | 中央指令键外围环形灯，显示收听、指令、发送和异常 |
+| 扬声器 | 正面上方细缝，播放远端语音、TTS 和提示音 |
 | 麦克风 | 正面或顶部，承担唤醒、指令和对讲采集 |
-| 天线/背夹 | 补全设备形态，不增加业务操作 |
+| 天线 | 内置，侧边分隔缝表达射频窗口，无独立操作 |
 
 GLB 节点独立命名为机身、电源键、指令/结束键、PTT、屏幕和状态灯；按键轴心沿按压方向设置。初始目标为 3–5 万三角面、1K 为主的纹理、资源合计尽量不超过 5 MB。默认相机正面偏转约 15°，拖动背景可观察设备；操作按键不会旋转机身。手机端默认固定操作视角。
 
-仓库内置 `web/public/models/xiaolu.glb`，节点使用 `body`、`power`、`command`、`ptt`、`screen`、`indicator`；天线、扬声器、麦克风孔和背夹为独立部件。模型来源为 `web/src/device/model.ts`，使用 Node 22 执行 `node --experimental-strip-types web/scripts/build-device-model.mjs` 可重新生成。
+仓库内置 `web/public/models/xiaolu.glb`，节点使用 `body`、`power`、`command`、`ptt`、`screen`、`indicator`；细缝扬声器、微型麦克风孔、金属边框及内置天线分隔缝为独立部件。模型来源为 `web/src/device/model.ts`，使用 Node 22 执行 `node --experimental-strip-types web/scripts/build-device-model.mjs` 可重新生成。
 
-屏幕使用约 240 × 320 的逻辑布局。React/HTML 层与屏幕平面对齐，以保证中文输入、二维码和状态文字清晰；转到背面时隐藏屏幕层，避免穿透。页面外仅提供回正、缩放和观察辅助，不提供业务操作。
+屏幕使用 280 × 360 的固定逻辑布局，与模型中的 1.68 × 2.16 屏幕开孔保持相同比例。屏幕内容独立滚动，CSS3D 渲染器及叠加容器使用 overflow: clip，避免输入框聚焦引起外层滚动使屏幕与机身错位。React/HTML 层与屏幕平面对齐，以保证中文输入、二维码和状态文字清晰；转到背面时隐藏屏幕层，避免穿透。页面外仅提供回正、缩放和观察辅助，不提供业务操作。
 
 ## 4. 三个控件的行为
 
@@ -95,10 +95,24 @@ PTT、指令键和语音唤醒共用设备控制层。按键有按压位移、�
 
 这是基于云端 STT 的唤醒门控，灵矽的 auto 模式和 listen.detect 均不表示云端自动识别自定义唤醒词。待命及对讲音频也会上传给灵矽，未开放业务工具不代表没有 ASR/模型消耗。官方 STT 和 MCP 没有共同的逐句请求标识；本地轮次标识只用于设备确认，不能证明迟到的 MCP 调用属于哪一句话。过期窗口拒绝调用，但新窗口内迟到请求的归属仍需平台能力与真实联调验证。
 
-### 5.2 业务指令
+### 5.2 公共频道与在线邀请
+
+同一服务维护唯一的公共频道，不引入车队归属。设备每次开机建立业务会话后自动加入并切入公共频道，完成媒体进房后默认收听，不自动发布；业务信令重连仅同步当前频道，不能当成重新开机把用户强制拉回公共频道。固定公共频道 ID 为 `public`，名称为“公共频道”，由服务端维护，创建该名称也复用公共频道，不依赖可重复输入的名称作为身份。已有用户在 `POST /api/v1/device/boot` 完成灵矽绑定后进入公共频道；首次设置昵称建立会话时，若还没有当前频道，则补入公共频道。仅恢复业务会话不覆盖已有当前频道。
+
+在线联系人来自已鉴权的活动设备信令连接，跨频道可查询；返回稳定用户标识与昵称供定向邀请，同名不猜测。信令在线不证明媒体接收或实际听感，频道成员表也不作为在线依据。MVP 不提供组织隔离，接入同一服务的设备可以相互发现。
+
+邀请先解析在线目标，再解析发起者已加入的目标频道：一个同名频道则复用，没有则创建，多个则提示使用其他明确名称。提交发起者频道切换并等待设备媒体进房回执后再投递邀请；进房失败则提示邀请未送达。接收者收到邀请时只显示和播报，不立即加入或切换；接受后先停止原频道发送，再加入并执行切换，拒绝保持频道。邀请跨频道投递、保存在进程内且两分钟有效，每个接收者最多一个待处理邀请，其他新邀请返回冲突，同一发起者同频道的重复邀请复用结果且不延长有效期。邀请绑定接收者用户身份；离线不排队，已处理、过期和他人邀请不能执行。
+
+邀请播报走真实灵矽语音连接。服务端根据保存的邀请生成固定文本，通过 `listen.detect` 的 `text_response` 请求 TTS；只开放播报门控，不能借此授权业务工具。设备播放结束回执后开放继续交流窗口，接收者的“接受/拒绝”再通过正常 STT、停止上行回执与 MCP 工具执行。后台、语音断线或忙碌导致播报请求无法完成时，邀请投递失败并失效；发起者已完成的频道创建/切换不会回滚。请求成功不代表接收者确实听到，实际听感需验收。
+
+### 5.3 业务指令
 
 | 用户表达 | 设备行为 |
 |----------|----------|
+| 谁在线 / 有哪些人可以联系 | 查询跨频道在线联系人 |
+| 邀请老王加入装货频道 | 解析在线成员和已加入频道，必要时创建，发起者切入后发送邀请 |
+| 接受 / 拒绝 | 处理发给本人的有效邀请；只处理本人当前待处理邀请 |
+| 回到公共频道 | 停止发送并切回固定公共频道 |
 | 创建一个装货频道 | 创建并进入，逐位播报口令 |
 | 加入口令三八四二 K 九 | 归一化口令、复述并等待确认 |
 | 确认加入 / 取消 | 执行或清除待确认事项 |
@@ -134,7 +148,7 @@ PTT、指令键和语音唤醒共用设备控制层。按键有按压位移、�
 stateDiagram-v2
   [*] --> Off
   Off --> Booting: 电源长按
-  Booting --> Standby: 初始化完成
+  Booting --> Listening: 初始化完成，进入公共频道
   Standby --> Listening: 进入频道
   Standby --> CommandListening: 唤醒或指令键
   Listening --> CommandListening: 唤醒或指令键
@@ -183,9 +197,10 @@ sequenceDiagram
 | channels | 频道 ID、名称、口令、创建者、创建时间 |
 | memberships | 用户、频道、角色 |
 | device_session | 当前频道、发送状态、上一频道、活动动作 |
+| 进程内 invitations | 邀请 ID、发起者、接收者、频道、状态与两分钟有效期；不写入 SQLite，服务重启失效 |
 | command_context | 设备与灵矽会话内的待确认动作、参数、过期时间、动作 ID |
 
-同一设备只允许一个当前频道和一个上行状态；成员事件广播给频道成员，设备动作定向到目标设备。绑定流程先验证设备归属，再建立用户会话。首次语音设置只允许初始化昵称和绑定，不开放未鉴权的通用音频代理。设备动作使用唯一 action_id，处理重复动作、取消和迟到结果；MCP 请求使用独立 JSON-RPC ID。
+同一设备只允许一个当前频道和一个上行状态；成员事件广播给频道成员，设备动作定向到目标设备。绑定流程先验证设备归属，再建立用户会话。首次昵称使用文本设置；未建立有效业务会话时不开放通用音频代理。设备动作使用唯一 action_id，处理重复动作、取消和迟到结果；MCP 请求使用独立 JSON-RPC ID。
 
 ## 8. 服务接口
 
@@ -203,6 +218,11 @@ sequenceDiagram
 | GET | `/api/v1/channels/{id}/rtn-token` | 为成员签发 RoomToken |
 | POST | `/api/v1/talk/start` | 请求开始上行 |
 | POST | `/api/v1/talk/end` | 请求结束上行 |
+| GET | `/api/v1/online-members` | 查询其他在线设备用户，返回 `members` 中的 `user_id`、`display_name` |
+| GET | `/api/v1/invitations` | 查询本人有效待处理邀请，返回 `invitations` |
+| POST | `/api/v1/invitations` | 以 `name` 和 `recipient_name` / `recipient_id` 二选一创建邀请 |
+| POST | `/api/v1/invitations/{id}/accept` | 接受本人有效邀请并加入、切换 |
+| POST | `/api/v1/invitations/{id}/reject` | 拒绝本人有效邀请，保持频道 |
 | POST | `/api/v1/mcp` | Streamable HTTP：初始化、通知和 MCP JSON-RPC 请求 |
 | DELETE | `/api/v1/mcp` | 结束 `Mcp-Session-Id` 指定的 MCP 会话 |
 | POST | `/api/v1/device/boot` | 设备开机认证并按 mac_id 检查/完成灵矽绑定 |
@@ -228,6 +248,7 @@ sequenceDiagram
 { "type": "action", "action_id": "...", "action": "switch_channel", "channel_id": "..." }
 { "type": "channel_state", "channel_id": "...", "name": "装货" }
 { "type": "members", "channel_id": "...", "members": [] }
+{ "type": "invitation", "invitation": { "id": "...", "channel_id": "...", "channel_name": "装货", "sender_id": "...", "sender_name": "小王", "recipient_id": "...", "expires_at": "2026-10-24T09:02:00Z", "status": "pending" } }
 { "type": "action_cancel", "action_id": "..." }
 { "type": "error", "message": "..." }
 ```
@@ -241,9 +262,11 @@ sequenceDiagram
 { "type": "ping" }
 ```
 
-`success` 必须为显式布尔值，失败信息使用 `message`。支持 `talk_start`、`talk_end`、`switch_channel`、`set_volume`、`show_join_qr`、`set_nickname`；`set_volume` 和 `set_nickname`通过字符串 `value` 传参，音量范围 0–100；`+10` / `-10` 表示相对当前设备音量增减 10 个百分点并限制在该范围内。每个设备最多一个待执行动作，服务端 15 秒超时后发送 `action_cancel`。客户端以 `action_id` 复用回执，不重复执行；断线取消本地待执行动作，重连只恢复频道和成员状态。
+`success` 必须为显式布尔值，失败信息使用 `message`。支持 `announce_invitation`、`talk_start`、`talk_end`、`switch_channel`、`set_volume`、`show_join_qr`、`set_nickname`；`set_volume` 和 `set_nickname`通过字符串 `value` 传参，音量范围 0–100；`+10` / `-10` 表示相对当前设备音量增减 10 个百分点并限制在该范围内。每个设备最多一个待执行动作，服务端 15 秒超时后发送 `action_cancel`。客户端以 `action_id` 复用回执，不重复执行；断线取消本地待执行动作，重连只恢复频道和成员状态。
 
-成员讲话状态只广播给同频道成员；设备动作只发送给目标设备。服务端不以 MCP 响应发送成功代替设备动作成功。
+`announce_invitation` 的字符串 `value` 是与上例一致的邀请 JSON。设备先校验邀请接收者、前台状态与语音就绪，展示提示并返回动作回执；随后服务端发送 `wake.detected`，设备停止 RTN 上行并返回对应 `wake.ready`，服务端才通过 `listen.detect` 的 `text_response` 请求真实灵矽播报。邀请状态事件发送给发起者与接收者，`status` 为 `pending`、`accepted`、`rejected` 或 `expired`；接收者可用 GET 邀请接口恢复当前待办。过期按有效期判断，不能依赖恰好在到期时收到推送；服务重启不恢复邀请。
+
+成员讲话状态只广播给同频道成员；设备动作只发送给目标设备。在线目录按活动连接查询，邀请按接收者身份跨频道投递，不向其他成员广播。服务端不以 MCP 响应发送成功代替设备动作成功。
 
 ### 8.3 灵矽云端 MCP
 
@@ -251,7 +274,7 @@ sequenceDiagram
 
 所有请求携带 `Authorization: Bearer <LINX_MCP_TOKEN>`。设备调用由灵矽平台附加 `X-Linx-Device-Id`、`X-Linx-Agent-Id` 和 `X-Linx-Session-Id`；设备标识是注册记录中的 `mac_id`，智能体 ID 必须与 `LINX_AGENT_ID` 一致。控制台无设备上下文时可初始化及读取工具目录，不能执行业务工具。设备身份不接受模型参数覆盖。
 
-工具包括 `create_channel`、`join_channel`、`confirm_action`、`cancel_action`、`switch_channel`、`previous_channel`、`talk_start`、`talk_end`、`list_my_channels`、`list_speakers`、`show_join_code`、`show_join_qr`、`set_volume` 和 `set_nickname`。参数以 `tools/list` 的 JSON Schema 为准，完整表见 [灵矽接入方案](./linx-access.md)。结果使用 MCP `content` 文本及 `isError`，灵矽按实际结果播报；需要设备执行的操作沿 `/api/v1/device/ws` 下发并等待回执。
+工具包括 `list_online_members`、`invite_member`、`accept_invitation`、`reject_invitation`、`create_channel`、`join_channel`、`confirm_action`、`cancel_action`、`switch_channel`、`previous_channel`、`talk_start`、`talk_end`、`list_my_channels`、`list_speakers`、`show_join_code`、`show_join_qr`、`set_volume` 和 `set_nickname`。参数以 `tools/list` 的 JSON Schema 为准，完整表见 [灵矽接入方案](./linx-access.md)。结果使用 MCP `content` 文本及 `isError`，灵矽按实际结果播报；需要设备执行的操作沿 `/api/v1/device/ws` 下发并等待回执。
 
 口令入群与昵称修改先生成设备与灵矽会话内的待确认事项，`confirm_action` 消费有效待办，`cancel_action` 清除待办；有效期为两分钟，缺失或过期不得执行；同设备的另一灵矽会话不能确认该待办。同一 MCP 会话内使用 JSON-RPC 请求 ID 识别重试；`Mcp-Session-Id`、灵矽对话 session ID 和设备 action_id 各自独立。跨 MCP 会话的业务去重需要进一步定义稳定请求标识，当前不承诺持久幂等。
 
@@ -280,7 +303,7 @@ sequenceDiagram
 5. 正式模型、材质、灯光、二维码和移动端体验。
 6. 目标硬件平台的 RTN、灵矽、唤醒、声学、弱网和续航评估。
 
-验收要求：首次授权后，用户只通过小路语音完成昵称设置、建群、确认入群、切群/回切、开始/结束对讲、音量和邀请查询；三个按键随时可以中止或兜底。验证覆盖无效口令、确认过期、歧义追问、识别失败、媒体失败、快速松开、迟到回执、重复动作、设备断线、关机释放和真实双端音频。
+验收要求：首次文本昵称设置及授权后，自动进入公共频道，用户通过小路语音完成在线查询、创建并邀请、接受/拒绝、改名、确认入群、切群/回切、开始/结束对讲、音量和邀请查询；三个按键随时可以中止或兜底。验证覆盖公共频道唯一性、恢复当前频道与重新开机的区别、跨频道邀请、同名澄清、离线不投递、邀请过期/重复处理/非本人拒绝、无效口令、确认过期、歧义追问、识别失败、媒体失败、快速松开、迟到回执、重复动作、设备断线、关机释放和真实双端音频。
 
 ## 11. 配置与开发命令
 

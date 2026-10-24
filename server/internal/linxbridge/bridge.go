@@ -194,7 +194,10 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { h.Wake.Close(u.DeviceID, state.get()) }()
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); h.remoteToLocal(ctx, remote, localWriter, cancel, u.DeviceID, state) }()
+	go func() {
+		defer wg.Done()
+		h.remoteToLocal(ctx, remote, localWriter, cancel, u.DeviceID, state, remoteWriter)
+	}()
 	go func() { defer wg.Done(); localToRemote(ctx, local, remoteWriter, cancel, state) }()
 	wg.Wait()
 }
@@ -214,7 +217,7 @@ type bridgeWake struct {
 func (b *bridgeWake) get() *WakeSession  { b.mu.Lock(); defer b.mu.Unlock(); return b.session }
 func (b *bridgeWake) set(s *WakeSession) { b.mu.Lock(); b.session = s; b.mu.Unlock() }
 
-func (h Handler) remoteToLocal(ctx context.Context, remote *websocket.Conn, local *writeConn, cancel context.CancelFunc, deviceID string, state *bridgeWake) {
+func (h Handler) remoteToLocal(ctx context.Context, remote *websocket.Conn, local *writeConn, cancel context.CancelFunc, deviceID string, state *bridgeWake, upstream ...*writeConn) {
 	defer cancel()
 	for {
 		typ, payload, err := remote.Read(ctx)
@@ -247,6 +250,16 @@ func (h Handler) remoteToLocal(ctx context.Context, remote *websocket.Conn, loca
 					defer emitCancel()
 					_ = local.text(emitCtx, event)
 				}, cancel)
+				if len(upstream) > 0 {
+					session.mu.Lock()
+					session.announce = func(sendCtx context.Context, text string) error {
+						if err := upstream[0].text(sendCtx, map[string]string{"type": "abort", "session_id": msg.SessionID}); err != nil {
+							return err
+						}
+						return upstream[0].text(sendCtx, map[string]string{"type": "listen", "state": "detect", "session_id": msg.SessionID, "text": "频道邀请", "text_response": text})
+					}
+					session.mu.Unlock()
+				}
 				state.set(session)
 			case "stt":
 				session := state.get()

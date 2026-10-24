@@ -108,7 +108,7 @@ export function useDeviceController() {
     if (action === 'command-cancel') feedback.stop()
     controls.current(action)
   }
-  const status = `${device.screen} · 小路${session ? ` · ${displayNickname}` : ''}`
+  const status = `小路${session ? ` · ${displayNickname}` : ''}`
   return {
     device,
     session,

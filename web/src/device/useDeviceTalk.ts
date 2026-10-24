@@ -5,6 +5,7 @@ import {
   useState,
 } from 'react'
 import { createQiniuRoom, type RtnRoom } from '../rtc/index.ts'
+import { isPlaybackBlocked } from '../rtc/room.ts'
 import {
   endTalk,
   selfTalkAction,
@@ -409,17 +410,19 @@ export function useDeviceTalk({
     stopLocal()
   }
 
-  function unlockAudio() {
+  async function unlockAudio() {
     const root = sinkRef.current
     if (!root) {
       return
     }
-    for (const el of root.querySelectorAll('audio, video')) {
-      if (el instanceof HTMLMediaElement) {
-        void el.play().catch(() => {})
-      }
+    const media = Array.from(root.querySelectorAll('audio, video')).filter((el): el is HTMLMediaElement => el instanceof HTMLMediaElement)
+    if (media.length === 0) return
+    try {
+      await Promise.all(media.map(el => el.play()))
+      setListenHint('')
+    } catch {
+      setListenHint('声音仍未开启，请保持页面前台并再次点击“打开声音”')
     }
-    setListenHint('')
   }
 
   const joined = view === 'ready'
@@ -433,8 +436,4 @@ export function useDeviceTalk({
     setAttempt((n) => n + 1)
   }
   return { view, talk, error, publishing, listenHint, sinkRef, joined, talking, press, release, end, unlockAudio, keyboardHoldRef, retry }
-}
-
-function isPlaybackBlocked(err: unknown): boolean {
-  return err instanceof DOMException && err.name === 'NotAllowedError'
 }

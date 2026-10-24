@@ -26,20 +26,23 @@ type Hub struct {
 	users    *user.Service
 	channels *channel.Service
 
-	mu      sync.Mutex
-	conns   map[string]map[*client]struct{}
-	devices map[string]*client
-	actions map[string]pendingAction
+	mu                 sync.Mutex
+	conns              map[string]map[*client]struct{}
+	devices            map[string]*client
+	actions            map[string]pendingAction
+	invitations        map[string]*Invitation
+	invitationNotifier func(context.Context, string, string) error
 }
 
 // NewHub 用同一套用户与频道服务处理信令。
 func NewHub(users *user.Service, channels *channel.Service) *Hub {
 	return &Hub{
-		users:    users,
-		channels: channels,
-		conns:    map[string]map[*client]struct{}{},
-		devices:  map[string]*client{},
-		actions:  map[string]pendingAction{},
+		users:       users,
+		channels:    channels,
+		conns:       map[string]map[*client]struct{}{},
+		devices:     map[string]*client{},
+		actions:     map[string]pendingAction{},
+		invitations: map[string]*Invitation{},
 	}
 }
 
@@ -399,6 +402,16 @@ func (h *Hub) remove(c *client) bool {
 		return false
 	}
 	delete(h.conns, c.userID)
+	for id, inv := range h.invitations {
+		if inv.RecipientID == c.userID && inv.Status == "pending" {
+			inv.Status = "expired"
+			if inv.timer != nil {
+				inv.timer.Stop()
+			}
+			h.publishInvitation(inv)
+			delete(h.invitations, id)
+		}
+	}
 	return true
 }
 

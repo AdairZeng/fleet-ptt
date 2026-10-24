@@ -261,3 +261,74 @@ func newChannelService(t *testing.T) *Service {
 	t.Cleanup(func() { _ = st.Close() })
 	return &Service{Store: st}
 }
+
+func TestPublicChannelSingleton(t *testing.T) {
+	svc := newChannelService(t)
+	ctx := context.Background()
+	now := time.Now()
+	first, err := svc.EnsurePublic(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.EnsurePublic(ctx, now.Add(time.Hour))
+	if err != nil || first != second {
+		t.Fatalf("public changed: first=%+v second=%+v err=%v", first, second, err)
+	}
+	if first.ID != PublicID || first.Name != PublicName || !validCode(first.JoinCode) {
+		t.Fatalf("unexpected public channel: %+v", first)
+	}
+	for _, id := range []string{"driver-a", "driver-b"} {
+		view, err := svc.JoinByID(ctx, id, PublicID)
+		if err != nil || view.Role != RoleMember {
+			t.Fatalf("join public %+v err=%v", view, err)
+		}
+		current, err := svc.Current(ctx, id)
+		if err != nil || current.Channel.ID != PublicID {
+			t.Fatalf("current %+v err=%v", current, err)
+		}
+	}
+	view, err := svc.Create(ctx, "driver-c", PublicName, now)
+	if err != nil || view.Channel.ID != PublicID || view.Role != RoleMember {
+		t.Fatalf("create public should join singleton: %+v %v", view, err)
+	}
+	channels, err := svc.Store.ChannelsByName(ctx, PublicName)
+	if err != nil || len(channels) != 1 {
+		t.Fatalf("duplicate public channels: %+v %v", channels, err)
+	}
+}
+
+func TestResolveInvitationChannel(t *testing.T) {
+	svc := newChannelService(t)
+	ctx := context.Background()
+	now := time.Now()
+	other, err := svc.Create(ctx, "other", "装货频道", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, isNew, err := svc.ResolveInvitationChannel(ctx, "driver", "装货频道", now)
+	if err != nil || !isNew || created.Channel.ID == other.Channel.ID {
+		t.Fatalf("unexpected resolution: %+v created=%v err=%v", created, isNew, err)
+	}
+	resolved, isNew, err := svc.ResolveInvitationChannel(ctx, "driver", "装货频道", now)
+	if err != nil || isNew || resolved.Channel.ID != created.Channel.ID {
+		t.Fatalf("unexpected reuse: %+v created=%v err=%v", resolved, isNew, err)
+	}
+	if _, err := svc.Create(ctx, "driver", "装货频道", now); err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.Current(ctx, "driver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.ResolveInvitationChannel(ctx, "driver", "装货频道", now); !errors.Is(err, ErrAmbiguousName) {
+		t.Fatalf("ambiguity err=%v", err)
+	}
+	after, _ := svc.Current(ctx, "driver")
+	if after.Channel.ID != before.Channel.ID {
+		t.Fatal("ambiguous invitation changed channel")
+	}
+	views, err := svc.List(ctx, "driver")
+	if err != nil || len(views) != 2 {
+		t.Fatalf("ambiguous invitation created channel: %+v %v", views, err)
+	}
+}

@@ -41,6 +41,7 @@ export function TalkPanel(props: DeviceTalkProps) {
         </p>
       ) : null}
       <div ref={sinkRef} className="remote-audio" />
+      <h2 className="roster-heading">频道成员</h2>
       {members && members.length > 0 ? (
         <ul className="roster" aria-live="polite">
           {members.map((member) => {
@@ -82,6 +83,8 @@ export function TalkPanel(props: DeviceTalkProps) {
           重试进房
         </button>
       ) : null}
+      <details className="screen-menu touch-controls">
+        <summary>屏幕按键 <span>按住说话 · 结束 · 指令</span></summary>
       <div className="talk-dock">
         <div className="talk-dock-inner">
           <button
@@ -139,6 +142,7 @@ export function TalkPanel(props: DeviceTalkProps) {
           </div>
         </div>
       </div>
+      </details>
     </section>
   )
 }

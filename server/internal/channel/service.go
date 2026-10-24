@@ -16,6 +16,9 @@ const (
 	// RoleMember 是后来用口令或频道名加入的人。
 	RoleMember = "member"
 
+	PublicID   = "public"
+	PublicName = "公共频道"
+
 	maxNameRunes = 32
 )
 
@@ -55,6 +58,12 @@ func (s *Service) Create(ctx context.Context, userID, name string, now time.Time
 	if !validName(name) {
 		return View{}, ErrInvalidName
 	}
+	if name == PublicName {
+		if _, err := s.EnsurePublic(ctx, now); err != nil {
+			return View{}, err
+		}
+		return s.JoinByID(ctx, userID, PublicID)
+	}
 	now = now.UTC()
 	var last error
 	for range maxCodeAttempts {
@@ -87,6 +96,68 @@ func (s *Service) Create(ctx context.Context, userID, name string, now time.Time
 		last = errors.New("join code exhausted")
 	}
 	return View{}, last
+}
+
+// EnsurePublic keeps one shared default channel for all devices.
+func (s *Service) EnsurePublic(ctx context.Context, now time.Time) (store.Channel, error) {
+	ch, err := s.Store.ChannelByID(ctx, PublicID)
+	if err == nil || !errors.Is(err, store.ErrNotFound) {
+		return ch, err
+	}
+	for range maxCodeAttempts {
+		code, err := newJoinCode()
+		if err != nil {
+			return store.Channel{}, err
+		}
+		ch, err := s.Store.EnsureChannel(ctx, store.Channel{
+			ID: PublicID, Name: PublicName, JoinCode: code,
+			CreatedBy: "system", CreatedAt: now.UTC(),
+		})
+		if errors.Is(err, store.ErrJoinCodeTaken) {
+			continue
+		}
+		return ch, err
+	}
+	return store.Channel{}, store.ErrJoinCodeTaken
+}
+
+// JoinByID is used after a trusted invitation or default-channel selection.
+func (s *Service) JoinByID(ctx context.Context, userID, channelID string) (View, error) {
+	ch, err := s.Store.ChannelByID(ctx, channelID)
+	if errors.Is(err, store.ErrNotFound) {
+		return View{}, ErrNameNotFound
+	}
+	if err != nil {
+		return View{}, err
+	}
+	return s.joinExisting(ctx, userID, ch)
+}
+
+// ResolveInvitationChannel reuses a channel the inviter has joined, or creates it.
+// A channel with the same name belonging only to another user is not selected.
+func (s *Service) ResolveInvitationChannel(ctx context.Context, userID, name string, now time.Time) (View, bool, error) {
+	name = strings.TrimSpace(name)
+	if !validName(name) {
+		return View{}, false, ErrInvalidName
+	}
+	views, err := s.List(ctx, userID)
+	if err != nil {
+		return View{}, false, err
+	}
+	var matches []View
+	for _, view := range views {
+		if view.Channel.Name == name {
+			matches = append(matches, view)
+		}
+	}
+	if len(matches) > 1 {
+		return View{}, false, ErrAmbiguousName
+	}
+	if len(matches) == 1 {
+		return matches[0], false, nil
+	}
+	view, err := s.Create(ctx, userID, name, now)
+	return view, name != PublicName, err
 }
 
 // Join 按口令或频道名加入，并设为当前频道。

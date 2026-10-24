@@ -1,7 +1,9 @@
+import { CommandGuide } from './CommandGuide.tsx'
 import { memberCountText } from '../state/presence.ts'
 import { JoinQR } from './JoinQR.tsx'
 import { ScanJoin } from './ScanJoin.tsx'
 import { TalkPanel } from './TalkPanel.tsx'
+import { Invitations } from './Invitations.tsx'
 import { useDeviceChannel, type DeviceChannelProps } from '../device/useDeviceChannel.ts'
 
 export function ChannelPage(props: DeviceChannelProps) {
@@ -25,6 +27,7 @@ export function ChannelPage(props: DeviceChannelProps) {
     switchError,
     switchNotice,
     voiceNotice,
+    wakeMissed,
     voiceReady,
     volumeControl,
     volume,
@@ -57,23 +60,12 @@ export function ChannelPage(props: DeviceChannelProps) {
           <h1>{channel ? channel.name : '对讲'}</h1>
         </div>
         <div className="talk-bar-meta">
-          <p className={`presence presence-${presence}`} aria-hidden="true">
-            {copy.label}
-          </p>
           {channel ? (
             <p className="member-count">{memberCountText(roster?.length)}</p>
           ) : null}
         </div>
       </header>
-      {me ? (
-        <p className="meta">
-          {me.nickname} 已绑定 device_id {me.device_id}
-        </p>
-      ) : identityError ? (
-        <p className="error">{identityError}</p>
-      ) : (
-        <p className="hint">正在确认身份…</p>
-      )}
+      {identityError ? <p className="error" role="alert">{identityError}</p> : null}
 
       <section className={`talk-stage stage-${presence}`} aria-live="polite">
         <p className="talk-glance" role="status">
@@ -81,16 +73,13 @@ export function ChannelPage(props: DeviceChannelProps) {
         </p>
         {copy.detail ? <p className="talk-detail">{copy.detail}</p> : null}
       </section>
-      <p className="hint" role="status">{voiceReady
-        ? '语音监听已开启 · 说“你好小路”'
-        : '语音未就绪，可按指令键重试并允许麦克风权限'}</p>
-      <p className="hint">监听期间麦克风音频会发送至灵汐；关机可停止监听。</p>
-      {signalError ? <p className="error">{signalError}</p> : null}
-      {voiceNotice ? (
-        <p className="hint" role="status">
-          {voiceNotice}
-        </p>
-      ) : null}
+      <section className="assistant-card" aria-label="小路语音状态">
+        <div className="assistant-heading"><strong>小路</strong><span>{voiceReady ? '语音已连接' : '语音未就绪'}</span></div>
+        <p role="status">{!voiceReady ? '按指令键重试，并允许麦克风权限' : voiceNotice ? voiceNotice : '说“你好小路”，我在听'}</p>
+        {wakeMissed ? <details><summary>最近识别 · 未唤醒</summary><p>“{wakeMissed}”</p></details> : null}
+      </section>
+      {signalError ? <p className="error" role="alert">{signalError}</p> : null}
+      <CommandGuide />
       {linkError ? (
         <p className="error" role="alert">
           {linkError}
@@ -125,14 +114,10 @@ export function ChannelPage(props: DeviceChannelProps) {
         />
       ) : null}
 
-      <nav className="manual-jumps" aria-label="手动兜底">
-        {hasList ? <a href="#channel-list">频道列表</a> : null}
-        {channel ? <a href="#join-code">口令二维码</a> : null}
-        <a href="#join-by-code">口令 / 扫码</a>
-        <a href="#create-channel">创建频道</a>
-      </nav>
-
-      <div className="manual">
+      <Invitations session={session} channelName={channel?.name || ''} subscribe={signaling.subscribe} stopUplink={() => stopUplinkRef.current()} />
+      <details className="screen-menu">
+        <summary>频道管理 <span>切换 · 创建 · 加入 · 分享</span></summary>
+        <div className="manual">
         {hasList ? (
           <section className="channel-list" id="channel-list">
             <h2>频道列表</h2>
@@ -241,10 +226,15 @@ export function ChannelPage(props: DeviceChannelProps) {
           />
         </section>
 
-        <button type="button" className="secondary" onClick={onChangeNickname}>
-          更换昵称
-        </button>
-      </div>
+        </div>
+      </details>
+      <details className="screen-menu">
+        <summary>设备与隐私 <span>{me?.nickname || session.nickname}</span></summary>
+        {me ? <p className="meta">设备 ID：{me.device_id}</p> : null}
+        <p className="hint">监听期间麦克风音频会发送至灵汐，关机可停止监听。</p>
+        <p className="hint">可说“音量调到五十”或“声音大一点”调整音量。</p>
+        <button type="button" className="secondary" onClick={onChangeNickname}>更换昵称</button>
+      </details>
 
       {channel ? null : (
         <div className="talk-dock">

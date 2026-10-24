@@ -85,3 +85,17 @@ test('parseSignal drops malformed events', () => {
   })
   assert.equal(parseSignal(JSON.stringify({ type: 'notice' })), null)
 })
+
+test('invitation events preserve identity and reject malformed payloads', () => {
+  const invitation = { id: 'invite-1', channel_id: 'loading', channel_name: '装货', sender_id: 'captain', sender_name: '队长', recipient_id: 'driver', expires_at: '2026-10-24T10:00:00Z', status: 'pending' }
+  const event = { type: 'invitation', invitation }
+  assert.deepEqual(parseSignal(JSON.stringify(event)), event)
+  for (const field of ['id', 'channel_id', 'channel_name', 'sender_id', 'sender_name', 'recipient_id', 'expires_at']) {
+    assert.equal(parseSignal(JSON.stringify({ ...event, invitation: { ...invitation, [field]: '' } })), null)
+  }
+  assert.equal(parseSignal(JSON.stringify({ ...event, invitation: { ...invitation, status: 'unknown' } })), null)
+  for (const status of ['accepted', 'rejected', 'expired']) {
+    const updated = { ...event, invitation: { ...invitation, status } }
+    assert.deepEqual(parseSignal(JSON.stringify(updated)), updated)
+  }
+})

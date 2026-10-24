@@ -7,13 +7,16 @@ const playbackListeners = new Set<(blocked: boolean) => void>()
 
 export async function acquireMicrophone(): Promise<{ stream: MediaStream; release: () => void }> {
   leases += 1
-  capture ??= navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
   let stream: MediaStream
   try {
+    capture ??= navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
     stream = await capture
   } catch (error) {
     leases -= 1
     if (leases === 0) capture = null
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      throw new Error('麦克风权限未允许，请在浏览器的网站权限中允许麦克风，再按指令键重试')
+    }
     throw error
   }
   let released = false

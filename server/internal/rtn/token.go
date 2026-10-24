@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -55,9 +56,14 @@ type roomAccess struct {
 	Permission string `json:"permission"`
 }
 
-// Configured 表示三项凭证都非空。占位符不会在这里被识别，调用七牛时会失败。
+// Configured rejects empty credentials and the example configuration placeholders.
 func (s Signer) Configured() bool {
-	return s.AccessKey != "" && s.SecretKey != "" && s.AppID != ""
+	for _, value := range []string{s.AccessKey, s.SecretKey, s.AppID} {
+		if strings.TrimSpace(value) == "" || strings.HasPrefix(value, "your_") {
+			return false
+		}
+	}
+	return true
 }
 
 // Sign 为 roomName（频道 id）和 userID 签发 permission=user 的 RoomToken。

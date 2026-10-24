@@ -126,8 +126,9 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
       let muted = true
       const applyMute = () => {
         const blocked = muted || isPlaybackBlocked()
+        // Native muting also works before publish and while unpublish is pending.
+        // QN setMuted requires a published track; PTT owns publish/unpublish separately.
         input.enabled = !blocked
-        track.setMuted(blocked)
       }
       const unsubscribe = onPlaybackBlocked(applyMute)
       applyMute()

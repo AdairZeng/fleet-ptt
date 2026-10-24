@@ -54,7 +54,7 @@ flowchart LR
 - 握手头、`hello` 和协议版本；
 - 音频编码、采样率、帧长和结束采集；
 - ASR 音频上行与 TTS 音频下行；
-- 应用设备会话与灵矽设备 ID 映射；
+- 应用设备会话与灵矽侧 `mac_id` 映射；
 - 取消、超时、断线、关机和并发会话释放；
 - 不向浏览器暴露灵矽长期凭证，不接受浏览器指定任意设备目标。
 
@@ -64,7 +64,7 @@ flowchart LR
 
 ### 4.1 自动设备绑定
 
-服务端配置灵矽 API Key、智能体 ID 和虚拟设备 MAC 后，在 3D 原型按下电源键时检查设备状态。已有业务会话使用会话令牌，首次开机使用服务端生成的设备 ID 和独立设备凭证；已绑定设备直接复用 WebSocket 凭证，未绑定时先向 OTA 接口上报设备信息，读取返回的 6 位激活码并调用 `POST /xiaozhi/device/bind/{agentId}/{deviceCode}`，随后调用 OTA 激活确认并重新上报，取得 WebSocket URL 和设备 Token。验证码只在服务端 API 链路中使用，不需要用户打开控制台手动输入。
+服务端只配置灵矽 API Key 和智能体 ID。模拟设备注册时生成 `device_id`、`mac_id` 和 `device_credential`；真实硬件在工厂预配这三项信息。设备按下电源键后，使用设备凭证调用 `/api/v1/device/boot`，服务端按该设备的 `mac_id` 检查状态：已绑定设备复用 WebSocket 凭证，未绑定时先向 OTA 接口上报设备信息，读取返回的 6 位激活码并调用 `POST /xiaozhi/device/bind/{agentId}/{deviceCode}`，随后调用 OTA 激活确认并重新上报，取得 WebSocket URL 和设备 Token。验证码只在服务端 API 链路中使用，不需要用户打开控制台手动输入。
 
 API Key、设备 Token 和智能体 ID 只保存在服务端环境变量，不返回浏览器、不写入数据库，也不提交到仓库。
 
@@ -72,7 +72,7 @@ API Key、设备 Token 和智能体 ID 只保存在服务端环境变量，不�
 
 ```text
 应用设备 ID ──绑定──> 用户 ID
-应用设备 ID ──映射──> 灵矽设备 ID
+应用设备 ID ──映射──> mac_id
 应用设备 ID ──连接──> 活动 WebSocket / 音频会话
 ```
 
@@ -80,7 +80,7 @@ API Key、设备 Token 和智能体 ID 只保存在服务端环境变量，不�
 
 灵矽 Chat 回调使用：
 
-- `auth.device_id` 定位已授权的灵矽设备映射；
+- `auth.device_id`（灵矽侧 mac_id）定位已授权的应用设备映射；
 - `details.msg` 作为本轮识别文本；
 - `details.session_id` 关联本轮对话与动作；
 - `Authorization: Bearer <LINX_CHAT_TOKEN>` 校验回调来源。

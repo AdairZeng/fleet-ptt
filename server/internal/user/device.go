@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 type DeviceCredential struct {
 	DeviceID   string `json:"device_id"`
+	MacID      string `json:"mac_id"`
 	Credential string `json:"device_credential"`
 }
 
@@ -22,7 +24,7 @@ func credentialHash(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Service) RegisterDevice(ctx context.Context, owner *store.User, now time.Time) (DeviceCredential, error) {
+func (s *Service) RegisterDevice(ctx context.Context, owner *store.User, requestedMAC string, now time.Time) (DeviceCredential, error) {
 	if s.Secret == "" {
 		return DeviceCredential{}, ErrNoSecret
 	}
@@ -34,15 +36,38 @@ func (s *Service) RegisterDevice(ctx context.Context, owner *store.User, now tim
 	if owner != nil {
 		deviceID, userID = owner.DeviceID, owner.ID
 	}
+	macID := strings.TrimSpace(requestedMAC)
+	if macID == "" {
+		if owner != nil {
+			if existing, lookupErr := s.Store.DeviceByID(ctx, deviceID); lookupErr == nil {
+				macID = existing.MacID
+			}
+		}
+		if macID == "" {
+			macID, err = newMACID()
+			if err != nil {
+				return DeviceCredential{}, err
+			}
+		}
+	}
 	var random [32]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return DeviceCredential{}, err
 	}
 	credential := hex.EncodeToString(random[:])
-	if err := s.Store.RegisterDevice(ctx, deviceID, userID, credentialHash(credential), now); err != nil {
+	if err := s.Store.RegisterDevice(ctx, deviceID, userID, macID, credentialHash(credential), now); err != nil {
 		return DeviceCredential{}, err
 	}
-	return DeviceCredential{DeviceID: deviceID, Credential: credential}, nil
+	return DeviceCredential{DeviceID: deviceID, MacID: macID, Credential: credential}, nil
+}
+
+func newMACID() (string, error) {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[0] = (b[0] & 0xfc) | 0x02
+	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]), nil
 }
 
 func (s *Service) DeviceSession(ctx context.Context, nickname, deviceID, credential string, now time.Time) (Session, error) {

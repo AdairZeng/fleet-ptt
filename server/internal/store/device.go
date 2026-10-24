@@ -5,15 +5,15 @@ import (
 	"time"
 )
 
-// RegisterDevice creates a server-owned identity or migrates a proven legacy user.
-func (s *Store) RegisterDevice(ctx context.Context, deviceID, userID, hash string, now time.Time) error {
+// RegisterDevice creates a server-owned identity.
+func (s *Store) RegisterDevice(ctx context.Context, deviceID, userID, macID, hash string, now time.Time) error {
 	if userID == "" {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO devices (device_id, user_id, credential_hash, bound_at, last_connected) VALUES (?, '', ?, 0, ?)`, deviceID, hash, now.Unix())
+		_, err := s.db.ExecContext(ctx, `INSERT INTO devices (device_id, user_id, mac_id, credential_hash, bound_at, last_connected) VALUES (?, '', ?, ?, 0, ?)`, deviceID, macID, hash, now.Unix())
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO devices (device_id, user_id, credential_hash, bound_at, last_connected)
- VALUES (?, ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET credential_hash = excluded.credential_hash
- WHERE devices.user_id = excluded.user_id`, deviceID, userID, hash, now.Unix(), now.Unix())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO devices (device_id, user_id, mac_id, credential_hash, bound_at, last_connected)
+ VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET mac_id = excluded.mac_id, credential_hash = excluded.credential_hash
+	 WHERE devices.user_id = excluded.user_id`, deviceID, userID, macID, hash, now.Unix(), now.Unix())
 	return err
 }
 
@@ -52,14 +52,14 @@ func (s *Store) BindDevice(ctx context.Context, deviceID, hash, newUserID, nickn
 	return u, nil
 }
 
-// UserByLinxDeviceID only resolves explicitly provisioned server-side mappings.
-func (s *Store) UserByLinxDeviceID(ctx context.Context, id string) (User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, `SELECT u.id, u.display_name, u.device_id, u.created_at FROM users u JOIN devices d ON d.user_id = u.id WHERE d.linx_device_id = ? AND d.linx_device_id <> ''`, id))
+// UserByMacID resolves the hardware identity assigned to a device.
+func (s *Store) UserByMacID(ctx context.Context, id string) (User, error) {
+	return scanUser(s.db.QueryRowContext(ctx, `SELECT u.id, u.display_name, u.device_id, u.created_at FROM users u JOIN devices d ON d.user_id = u.id WHERE d.mac_id = ? AND d.mac_id <> ''`, id))
 }
 
-// BindLinxDevice is a server-side provisioning operation, never a browser field.
-func (s *Store) BindLinxDevice(ctx context.Context, deviceID, linxID string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE devices SET linx_device_id = ? WHERE device_id = ? AND user_id <> ''`, linxID, deviceID)
+// BindMacID is a server-side provisioning operation, never a browser field.
+func (s *Store) BindMacID(ctx context.Context, deviceID, macID string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE devices SET mac_id = ? WHERE device_id = ? AND user_id <> ''`, macID, deviceID)
 	if err != nil {
 		return err
 	}

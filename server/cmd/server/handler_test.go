@@ -193,7 +193,7 @@ func TestSignalingNotShadowedByStatic(t *testing.T) {
 	h := newHandler(dir, users, channels, rtn.Signer{}, "")
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/device/ws", nil))
 	if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "home") || !strings.Contains(rec.Body.String(), "未登录") {
 		t.Fatalf("ws status %d body %s", rec.Code, rec.Body)
 	}
@@ -258,18 +258,15 @@ func testDeps(t *testing.T) (*user.Service, *channel.Service) {
 
 func deviceSessionBody(t *testing.T, users *user.Service, nickname, deviceID string) string {
 	t.Helper()
-	legacy, err := users.Enter(context.Background(), nickname, deviceID, time.Now())
+	owner, err := users.Enter(context.Background(), nickname, deviceID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := users.RegisterDevice(context.Background(), &legacy.User, time.Now())
+	credential, err := users.RegisterDevice(context.Background(), &owner.User, deviceID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := users.Store.BindLinxDevice(context.Background(), deviceID, deviceID); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.Marshal(map[string]string{"nickname": nickname, "device_id": deviceID, "device_credential": credential.Credential})
+	raw, err := json.Marshal(map[string]string{"nickname": nickname, "device_id": credential.DeviceID, "device_credential": credential.Credential})
 	if err != nil {
 		t.Fatal(err)
 	}

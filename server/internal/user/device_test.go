@@ -18,14 +18,14 @@ func TestDeviceCredentialRequiredAndNicknameStable(t *testing.T) {
 	defer st.Close()
 	svc := &Service{Store: st, Secret: "test-device-secret"}
 	ctx, now := context.Background(), time.Now()
-	credential, err := svc.RegisterDevice(ctx, nil, now)
+	credential, err := svc.RegisterDevice(ctx, nil, "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.DeviceSession(ctx, "司机", credential.DeviceID, "", now); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("missing proof: %v", err)
 	}
-	other, err := svc.RegisterDevice(ctx, nil, now)
+	other, err := svc.RegisterDevice(ctx, nil, "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,11 @@ func TestDeviceCredentialRequiredAndNicknameStable(t *testing.T) {
 	if saved.CredentialHash == credential.Credential {
 		t.Fatal("stored plaintext credential")
 	}
-	if _, err := st.UserByLinxDeviceID(ctx, credential.DeviceID); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("implicit linx mapping: %v", err)
+	byMAC, err := st.UserByMacID(ctx, credential.MacID)
+	if err != nil {
+		t.Fatalf("mac mapping: %v", err)
+	}
+	if byMAC.ID != first.User.ID {
+		t.Fatalf("mac mapping user %q, want %q", byMAC.ID, first.User.ID)
 	}
 }

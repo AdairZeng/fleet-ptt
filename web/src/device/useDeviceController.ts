@@ -32,7 +32,7 @@ export function useDeviceController() {
     const revision = lifecycle.current
     const next = await createSession(nickname, session)
     if (revision !== lifecycle.current) throw new Error('设备已关机，设置结果未应用')
-    const response = await fetch('/api/v1/linx/bind', { method: 'POST', headers: authHeaders(next) })
+    const response = await fetch('/api/v1/device/boot', { method: 'POST', headers: authHeaders(next) })
     if (!response.ok) throw new Error('灵汐设备绑定失败')
     saveSession(next)
     setSession(next)
@@ -84,7 +84,7 @@ export function useDeviceController() {
           'X-Device-ID': credential.device_id,
           'X-Device-Credential': credential.device_credential,
         })
-        const response = await fetch('/api/v1/linx/bind', { method: 'POST', headers })
+        const response = await fetch('/api/v1/device/boot', { method: 'POST', headers })
         if (!response.ok) throw new Error('灵汐设备绑定失败')
         await new Promise((resolve) => window.setTimeout(resolve, 250))
         if (!cancelled) dispatchDevice({ type: 'BOOT_READY', hasChannel: false })

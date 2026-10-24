@@ -7,7 +7,7 @@ export type Session = {
   session_token: string
   nickname: string
   device_id?: string
-  linx_device_id?: string
+  mac_id?: string
 }
 
 export type MeChannel = {
@@ -43,7 +43,7 @@ export function loadSession(): Session | null {
       session_token: parsed.session_token,
       nickname: parsed.nickname,
       device_id: parsed.device_id,
-      linx_device_id: parsed.linx_device_id,
+      mac_id: parsed.mac_id,
     }
   } catch {
     return null
@@ -83,7 +83,7 @@ export async function createSession(nickname: string, previous = loadSession()):
     session_token: body.session_token,
     nickname: body.nickname || nickname,
     device_id: body.device_id || credential.device_id,
-    linx_device_id: body.linx_device_id || undefined,
+    mac_id: credential.mac_id,
   }
 }
 

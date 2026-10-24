@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
+	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
 	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/mcp"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
@@ -23,7 +24,7 @@ import (
 
 // newLinxMCP exposes business capabilities to the Linx agent. Device identity is
 // supplied by the authenticated transport, never by model-generated arguments.
-func newLinxMCP(users *user.Service, channels *channel.Service, hub *ws.Hub, token, agentID string) *mcp.Server {
+func newLinxMCP(users *user.Service, channels *channel.Service, hub *ws.Hub, token, agentID string, wake *linxbridge.WakeRegistry) *mcp.Server {
 	gate := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	var mu sync.Mutex
 	active := make(map[string]bool)
@@ -43,6 +44,12 @@ func newLinxMCP(users *user.Service, channels *channel.Service, hub *ws.Hub, tok
 			log.Printf("linx mcp: resolve device: %v", err)
 			return toolAnswer("读取设备失败", true), nil
 		}
+		callCtx, cancel, err := wake.Authorize(ctx, u.DeviceID, identity.SessionID)
+		if err != nil {
+			return toolAnswer(err.Error(), true), nil
+		}
+		defer cancel()
+		ctx = callCtx
 		// Serialise even across MCP connections: a second operation must not
 		// consume a confirmation or race a device action awaiting acknowledgement.
 		mu.Lock()
@@ -59,6 +66,9 @@ func newLinxMCP(users *user.Service, channels *channel.Service, hub *ws.Hub, tok
 		}()
 		exec := voiceExec{channels: channels, hub: hub, gate: gate, sessionID: identity.SessionID}
 		result := exec.run(ctx, u, command, time.Now())
+		if name == "talk_start" && !result.Failed {
+			wake.EndAfterPlayback(ctx)
+		}
 		return toolAnswer(result.Answer, result.Failed), nil
 	})
 }

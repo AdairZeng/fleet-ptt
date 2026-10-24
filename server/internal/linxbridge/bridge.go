@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -35,13 +36,14 @@ type Config struct {
 // Manager keeps the active device credentials in memory and provisions them
 // only when an authenticated device asks to power on.
 type Manager struct {
+	Wake      *WakeRegistry
 	mu        sync.RWMutex
 	provision ProvisionConfig
 	configs   map[string]Config
 }
 
 func NewManager(provision ProvisionConfig) *Manager {
-	return &Manager{provision: provision, configs: make(map[string]Config)}
+	return &Manager{Wake: NewWakeRegistry(), provision: provision, configs: make(map[string]Config)}
 }
 
 func (m *Manager) Config(deviceID string) Config {
@@ -81,12 +83,14 @@ func (c Config) Ready() bool {
 type Handler struct {
 	Users  *user.Service
 	Bridge *Manager
+	Wake   *WakeRegistry
 }
 
 type localMessage struct {
-	Type  string `json:"type"`
-	State string `json:"state,omitempty"`
-	Mode  string `json:"mode,omitempty"`
+	Type   string `json:"type"`
+	State  string `json:"state,omitempty"`
+	Mode   string `json:"mode,omitempty"`
+	TurnID string `json:"turn_id,omitempty"`
 }
 
 type hello struct {
@@ -186,10 +190,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := remoteWriter.text(ctx, deviceHello()); err != nil {
 		return
 	}
+	state := &bridgeWake{}
+	defer func() { h.Wake.Close(u.DeviceID, state.get()) }()
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); h.remoteToLocal(ctx, remote, localWriter, cancel) }()
-	go func() { defer wg.Done(); localToRemote(ctx, local, remoteWriter, cancel) }()
+	go func() { defer wg.Done(); h.remoteToLocal(ctx, remote, localWriter, cancel, u.DeviceID, state) }()
+	go func() { defer wg.Done(); localToRemote(ctx, local, remoteWriter, cancel, state) }()
 	wg.Wait()
 }
 
@@ -200,7 +206,15 @@ func deviceHello() hello {
 	}
 }
 
-func (h Handler) remoteToLocal(ctx context.Context, remote *websocket.Conn, local *writeConn, cancel context.CancelFunc) {
+type bridgeWake struct {
+	mu      sync.Mutex
+	session *WakeSession
+}
+
+func (b *bridgeWake) get() *WakeSession  { b.mu.Lock(); defer b.mu.Unlock(); return b.session }
+func (b *bridgeWake) set(s *WakeSession) { b.mu.Lock(); b.session = s; b.mu.Unlock() }
+
+func (h Handler) remoteToLocal(ctx context.Context, remote *websocket.Conn, local *writeConn, cancel context.CancelFunc, deviceID string, state *bridgeWake) {
 	defer cancel()
 	for {
 		typ, payload, err := remote.Read(ctx)
@@ -210,8 +224,50 @@ func (h Handler) remoteToLocal(ctx context.Context, remote *websocket.Conn, loca
 		if typ != websocket.MessageText && typ != websocket.MessageBinary {
 			continue
 		}
-		if typ == websocket.MessageText && !isValidRemoteMessage(payload) {
-			return
+		if typ == websocket.MessageText {
+			if !isValidRemoteMessage(payload) {
+				return
+			}
+			var msg struct {
+				Type      string `json:"type"`
+				State     string `json:"state"`
+				Text      string `json:"text"`
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal(payload, &msg) != nil {
+				return
+			}
+			switch msg.Type {
+			case "hello":
+				if msg.SessionID == "" || state.get() != nil {
+					return
+				}
+				session := h.Wake.Open(deviceID, msg.SessionID, func(event WakeEvent) {
+					emitCtx, emitCancel := context.WithTimeout(ctx, 2*time.Second)
+					defer emitCancel()
+					_ = local.text(emitCtx, event)
+				}, cancel)
+				state.set(session)
+			case "stt":
+				session := state.get()
+				if session == nil {
+					return
+				}
+				_, accepted := session.STT(msg.Text)
+				if !accepted {
+					continue
+				}
+			case "tts", "sentence_start", "llm", "notify", "custom":
+				session := state.get()
+				if session == nil || !session.waitReady(ctx) || !session.Output(msg.Type, msg.State) {
+					continue
+				}
+			}
+		} else {
+			session := state.get()
+			if session == nil || !session.Output("audio", "") {
+				continue
+			}
 		}
 		if err := local.raw(ctx, typ, payload); err != nil {
 			return
@@ -229,7 +285,7 @@ func isValidRemoteMessage(payload []byte) bool {
 	return message.Type == "hello" || message.Type == "stt" || message.Type == "tts" || message.Type == "listen" || message.Type == "sentence_start" || message.Type == "llm" || message.Type == "notify" || message.Type == "custom"
 }
 
-func localToRemote(ctx context.Context, local *websocket.Conn, remote *writeConn, cancel context.CancelFunc) {
+func localToRemote(ctx context.Context, local *websocket.Conn, remote *writeConn, cancel context.CancelFunc, wake *bridgeWake) {
 	defer cancel()
 	for {
 		typ, payload, err := local.Read(ctx)
@@ -238,6 +294,9 @@ func localToRemote(ctx context.Context, local *websocket.Conn, remote *writeConn
 		}
 		switch typ {
 		case websocket.MessageBinary:
+			if session := wake.get(); session == nil || !session.CaptureAllowed() {
+				continue
+			}
 			if len(payload) > maxAudioBytes {
 				return
 			}
@@ -255,8 +314,25 @@ func localToRemote(ctx context.Context, local *websocket.Conn, remote *writeConn
 			switch msg.Type {
 			case "hello", "ping":
 				continue
+			case "wake":
+				session := wake.get()
+				if session == nil {
+					continue
+				}
+				_, ok := session.Control(msg.State, msg.TurnID)
+				if !ok {
+					continue
+				}
+				continue
+			case "abort":
+				if session := wake.get(); session != nil {
+					session.Control("cancel", "")
+				}
 			case "listen":
 				if msg.State != "start" && msg.State != "stop" {
+					return
+				}
+				if msg.State == "start" && msg.Mode != "realtime" {
 					return
 				}
 			default:

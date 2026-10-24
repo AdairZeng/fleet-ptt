@@ -49,10 +49,13 @@ test('PTT publishes once and release or end unpublishes', async () => {
   assert.equal(fake.mics, 1)
   await room.leave()
   assert.equal(fake.destroyed, 1)
+  assert.equal(fake.muted, true)
   assert.ok(fake.calls.includes('leave'))
+  // Leaving destroys capture immediately and closes the connection; it does
+  // not wait for another SDK unpublish operation.
   assert.equal(
     fake.calls.filter((call) => call === 'unpublish').length,
-    2,
+    1,
   )
 })
 

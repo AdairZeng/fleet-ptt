@@ -35,7 +35,7 @@ const copy: Record<Presence, PresenceCopy> = {
   },
   commanding: {
     label: '指令中',
-    detail: '发送已停止。语音暂未就绪，请使用屏幕操作。',
+    detail: '发送已暂停，小路正在处理语音指令。',
   },
   talking: {
     label: '正在讲',

@@ -1,4 +1,5 @@
-import type { QNMicrophoneAudioTrack, QNRemoteAudioTrack, QNRemoteVideoTrack } from 'qnweb-rtc'
+import { acquireMicrophone, isPlaybackBlocked, onPlaybackBlocked } from '../linx/microphone.ts'
+import type { QNCustomAudioTrack, QNRemoteAudioTrack, QNRemoteVideoTrack } from 'qnweb-rtc'
 import {
   RtnRoom,
   type LocalMic,
@@ -24,7 +25,7 @@ export function createQiniuRoom(
 }
 
 function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) => void): RtnTransport {
-  const mics = new WeakMap<LocalMic, QNMicrophoneAudioTrack>()
+  const mics = new WeakMap<LocalMic, QNCustomAudioTrack>()
   return {
     async join(token, events, signal) {
       const QNRTC = await loadSdk()
@@ -112,19 +113,34 @@ function createQiniuTransport(sink: HTMLElement, onPlayError: (error: unknown) =
     },
     async createMic() {
       const QNRTC = await loadSdk()
-      let track: QNMicrophoneAudioTrack
+      const lease = await acquireMicrophone()
+      const input = lease.stream.getAudioTracks()[0].clone()
+      let track: QNCustomAudioTrack
       try {
-        track = await QNRTC.createMicrophoneAudioTrack()
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : '麦克风不可用'
-        throw new Error(`无法打开麦克风：${detail}`)
+        track = QNRTC.createCustomAudioTrack({ mediaStreamTrack: input })
+      } catch (error) {
+        input.stop()
+        lease.release()
+        throw error
       }
+      let muted = true
+      const applyMute = () => {
+        const blocked = muted || isPlaybackBlocked()
+        input.enabled = !blocked
+        track.setMuted(blocked)
+      }
+      const unsubscribe = onPlaybackBlocked(applyMute)
+      applyMute()
       const mic: LocalMic = {
-        setMuted(muted) {
-          track.setMuted(muted)
+        setMuted(value) {
+          muted = value
+          applyMute()
         },
         destroy() {
+          unsubscribe()
           track.destroy()
+          input.stop()
+          lease.release()
         },
       }
       mics.set(mic, track)

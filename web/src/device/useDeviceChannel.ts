@@ -87,6 +87,9 @@ export function useDeviceChannel({
   const [voiceNotice, setVoiceNotice] = useState('')
   const [commanding, setCommanding] = useState(false)
   const [arming, setArming] = useState(false)
+  const [voiceReady, setVoiceReady] = useState(false)
+  const [voicePlaying, setVoicePlaying] = useState(false)
+  const [voiceProcessing, setVoiceProcessing] = useState(false)
   const [room, setRoom] = useState<RoomSnapshot>({
     view: 'joining',
     talk: 'out',
@@ -213,25 +216,73 @@ export function useDeviceChannel({
     [finishCommand],
   )
   useEffect(() => {
+    let disposed = false
     const device = new LinxDevice(session, {
+      onWake: async () => {
+        if (disposed || !active.current) throw new Error('设备已关闭')
+        const generation = ++commandGeneration.current
+        feedback.stop()
+        setVoiceProcessing(true)
+        setArming(true)
+        await stopUplinkRef.current()
+        if (disposed || !active.current || commandGeneration.current !== generation) throw new Error('指令已取消')
+        setCommanding(true)
+        setArming(false)
+      },
       onEvent: (event) => {
-        if (!active.current) return
+        if (disposed || !active.current) return
+        if (event.type === 'ready') {
+          setVoiceReady(true)
+          setSignalError('')
+          setVoiceNotice('语音监听中，说“你好小路”')
+        }
         if (event.type === 'stt' && event.text) {
-          linxRef.current?.stop()
-          setCommanding(false)
           setVoiceNotice(`听到：${event.text}`)
         }
-        if (event.type === 'tts' && event.state === 'start') setVoiceNotice('小路正在回答…')
-        if (event.type === 'tts' && event.state === 'stop') setVoiceNotice('')
-        if (event.type === 'error') setSignalError(event.text || '灵汐连接异常')
+        if (event.type === 'wake' && event.state === 'standby') {
+          commandGeneration.current += 1
+          setCommanding(false)
+          setArming(false)
+          setVoiceProcessing(false)
+          setVoiceNotice('语音监听中，说“你好小路”')
+        }
+        if (event.type === 'wake' && event.state === 'followup') setVoiceProcessing(false)
+        if (event.type === 'playback') {
+          const playing = event.state === 'start'
+          setVoicePlaying(playing)
+          setVoiceNotice(playing ? '小路正在回答…' : '可继续说话，或说“你好小路”发起指令')
+          if (!playing) { setCommanding(false); setArming(false) }
+        }
+        if (event.type === 'error' || event.type === 'disconnected' || event.type === 'suspended') {
+          commandGeneration.current += 1
+          setVoiceReady(false)
+          setCommanding(false)
+          setArming(false)
+          setVoicePlaying(false)
+          setVoiceProcessing(false)
+          void stopUplinkRef.current().catch(() => {})
+          if (event.type !== 'suspended') setSignalError(event.text || '语音连接已断开，请按指令键重试')
+          setVoiceNotice(event.type === 'suspended' ? '页面已隐藏，语音监听暂停' : '')
+        }
       },
     })
     linxRef.current = device
+    const start = () => {
+      void device.start().catch((error: unknown) => {
+        if (!disposed) {
+          setVoiceReady(false)
+          setSignalError(error instanceof Error ? error.message : '语音监听启动失败，请按指令键重试')
+        }
+      })
+    }
+    start()
     return () => {
+      disposed = true
+      commandGeneration.current += 1
       device.close()
       linxRef.current = null
     }
-  }, [session])
+  }, [session, feedback])
   const signaling = useChannelSignaling(session, {
     executeAction: async (action: DeviceCommand, signal: AbortSignal) => {
       requireActive()
@@ -248,7 +299,6 @@ export function useDeviceChannel({
           ? Math.min(100, Math.max(0, Math.round(volume * 100) + Number(action.value)))
           : Number(action.value)
         if (!action.value || !Number.isFinite(value) || value < 0 || value > 100) throw new Error('音量无效')
-        volumeControl.current(value / 100)
         setVolume(value / 100)
       } else if (action.action === 'show_join_qr') {
         if (!inviteRef.current || action.channel_id !== channel?.channel_id) throw new Error('当前频道二维码未就绪')
@@ -412,9 +462,10 @@ export function useDeviceChannel({
   async function onCommand() {
     feedback.stop()
     const generation = ++commandGeneration.current
-    const next = commandToggle(commanding)
+    const next = commandToggle(commanding || voiceProcessing || voicePlaying)
     if (!next.stopUplink) {
       setCommanding(false)
+      setVoiceProcessing(false)
       linxRef.current?.stop()
       return
     }
@@ -422,7 +473,9 @@ export function useDeviceChannel({
     try {
       await stopUplinkRef.current()
       if (commandGeneration.current !== generation) return
-      await linxRef.current?.listen()
+      const device = linxRef.current
+      if (!device) throw new Error('语音设备未就绪')
+      await device.listen()
       if (commandGeneration.current !== generation) {
         linxRef.current?.stop()
         return
@@ -438,7 +491,11 @@ export function useDeviceChannel({
   }
 
   const busy = pending !== ''
-  const inCommand = commanding || arming
+  const inCommand = commanding || arming || voicePlaying || voiceProcessing
+  const ducking = inCommand
+  useEffect(() => {
+    volumeControl.current(ducking ? volume * 0.2 : volume)
+  }, [ducking, volume])
   const activeChannelID = channel?.channel_id ?? ''
   if (roomChannelID !== activeChannelID) {
     setRoomChannelID(activeChannelID)
@@ -460,11 +517,13 @@ export function useDeviceChannel({
         commandGeneration.current += 1
         setCommanding(false)
         setArming(false)
+        setVoiceProcessing(false)
         void stopUplinkRef.current().catch(() => {})
         linxRef.current?.stop()
       } else if (action === 'ptt-end') {
         void stopUplinkRef.current().catch(() => {})
       } else if (action === 'ptt-start' && !inCommand && !busy) {
+        linxRef.current?.stop()
         startUplinkRef.current()
       } else if (action === 'command' && !arming && !busy) {
         void onCommand()
@@ -474,16 +533,6 @@ export function useDeviceChannel({
   })
 
   useEffect(() => () => { commandGeneration.current += 1 }, [])
-
-  useEffect(() => {
-    if (!commanding) return
-    const timer = window.setTimeout(() => {
-      linxRef.current?.stop()
-      setCommanding(false)
-      setVoiceNotice('指令采集超时')
-    }, 30000)
-    return () => window.clearTimeout(timer)
-  }, [commanding])
 
   const presence = channel
     ? talkPresence(room.view, room.talk, inCommand)
@@ -513,7 +562,8 @@ export function useDeviceChannel({
     voiceNotice,
     room,
     volumeControl,
-    volume,
+    volume: ducking ? volume * 0.2 : volume,
+    voiceReady,
     voiceStartRef,
     startUplinkRef,
     stopUplinkRef,

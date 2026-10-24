@@ -23,6 +23,10 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 		bridge = managers[0]
 	}
 	hub := ws.NewHub(users, channels)
+	wake := linxbridge.NewWakeRegistry()
+	if bridge != nil {
+		wake = bridge.Wake
+	}
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
 	mux.HandleFunc("POST /api/v1/device/register", RegisterDevice(users))
 	mux.HandleFunc("POST /api/v1/device/boot", DeviceBoot(users, bridge))
@@ -36,8 +40,8 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("POST /api/v1/talk/start", TalkStart(users, hub))
 	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
 	mux.HandleFunc("GET /api/v1/device/ws", hub.ServeHTTP)
-	mux.Handle("GET /api/v1/linx/ws", linxbridge.Handler{Users: users, Bridge: bridge})
-	mcp := newLinxMCP(users, channels, hub, linxToken, agentID)
+	mux.Handle("GET /api/v1/linx/ws", linxbridge.Handler{Users: users, Bridge: bridge, Wake: wake})
+	mcp := newLinxMCP(users, channels, hub, linxToken, agentID, wake)
 	mux.Handle("/api/v1/mcp", mcp)
 }
 

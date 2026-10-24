@@ -880,18 +880,18 @@ main > .error {
 .device-screen #invitations > div { background: #133c46; padding: 9px; border: 1px solid #4f91a3; border-radius: 8px; }
 
 /* Xiaolu's titanium and glass enclosure uses a quiet product-gallery setting. */
-.device-page { color-scheme: light; color: #202735; background: #f0f1f4; padding-top: 38px; }
+.device-page { color-scheme: light; color: #202735; background: radial-gradient(ellipse at 50% 45%, #fafbfd, #f0f1f4 70%); padding: 28px 16px 16px; }
 .product-heading { text-align: center; margin: 0 auto 22px; padding: 0 20px; }
 .product-heading .product-eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 0.22em; color: #7b8493; }
 .product-heading h1 { margin: 12px 0 9px; font-size: clamp(26px, 4vw, 38px); font-weight: 500; letter-spacing: -0.055em; }
 .product-heading > p:last-child { font-size: 12px; color: #7a8290; letter-spacing: 0.05em; }
 .device-stage { width: min(100%, 52rem); margin-top: 0; }
 .device-canvas-wrap {
-  min-height: 43rem;
-  border: 1px solid #fff;
-  border-radius: 28px;
-  background: radial-gradient(ellipse at 50% 45%, #fff 0, #e9ecf1 65%, #e2e6ec);
-  box-shadow: inset 0 1px 0 #fff, 0 24px 65px #202c4010;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .device-canvas-wrap::before {
   content: '';
@@ -905,7 +905,7 @@ main > .error {
   border-radius: 50%;
   pointer-events: none;
 }
-.device-canvas-wrap canvas { height: 43rem; position: relative; }
+.device-canvas-wrap canvas { height: max(360px, calc(100dvh - 220px)); position: relative; }
 .device-model-note { top: 18px; left: 20px; color: #535e70; letter-spacing: 0.1em; font-weight: 500; }
 .device-model-note > span { font-size: 17px; }
 .device-model-note small { color: #939baa; font-size: 9px; }
@@ -963,8 +963,7 @@ main > .error {
 @media (max-width: 44rem) {
   .device-page { padding: 25px 8px 20px; }
   .product-heading { margin-bottom: 15px; }
-  .device-canvas-wrap { min-height: 38rem; border-radius: 22px; }
-  .device-canvas-wrap canvas { height: 38rem; }
+  .device-canvas-wrap canvas { height: max(360px, calc(100dvh - 200px)); }
   .device-model-note { top: 10px; left: 12px; }
   .device-hotspot { padding: 0; }
 }

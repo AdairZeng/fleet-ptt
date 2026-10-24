@@ -334,3 +334,25 @@ test('malformed PCM cancels playback instead of reading an incomplete sample', a
     assert.ok(socket.sent.some((v: any) => v.type === 'wake' && v.state === 'cancel'))
   } finally { device.close(); env.restore() }
 })
+
+test('gesture unlock resumes an audio context while initial start is pending', async () => {
+  const env = environment()
+  const original = env.Context.prototype.resume
+  let finish: (() => void) | undefined
+  let gesture = false
+  env.Context.prototype.resume = function () {
+    if (gesture) { finish?.(); return Promise.resolve() }
+    return new Promise<void>(resolve => { const previous = finish; finish = () => { previous?.(); resolve() } })
+  }
+  const device = new LinxDevice(session)
+  try {
+    const starting = device.start()
+    await tick()
+    assert.equal(env.Socket.sockets.length, 0)
+    gesture = true
+    device.unlockAudio()
+    await starting
+    assert.equal(env.Socket.sockets.length, 1)
+    assert.ok(env.Context.contexts[0].processor.onaudioprocess)
+  } finally { device.close(); env.Context.prototype.resume = original; env.restore() }
+})

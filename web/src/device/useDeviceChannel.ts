@@ -469,6 +469,7 @@ export function useDeviceChannel({
   }
 
   async function onCommand() {
+    linxRef.current?.unlockAudio()
     feedback.stop()
     const generation = ++commandGeneration.current
     const next = commandToggle(commanding || voiceProcessing || voicePlaying)

@@ -119,7 +119,17 @@ export class LinxDevice {
     return this.connection
   }
 
+  // Call synchronously from a gesture, even if an earlier resume is still pending.
+  unlockAudio(): void {
+    if (this.closed) return
+    this.audioContext ??= new AudioContext()
+    void this.audioContext.resume().catch((error: unknown) => {
+      if (!this.closed) this.handlers.onEvent?.({ type: 'error', text: error instanceof Error ? error.message : '请点击指令键开启声音' })
+    })
+  }
+
   start(): Promise<void> {
+    this.unlockAudio()
     if (this.starting) return this.starting
     if (this.processor && !document.hidden && this.socket?.readyState === WebSocket.OPEN) {
       this.handlers.onEvent?.({ type: 'ready' })

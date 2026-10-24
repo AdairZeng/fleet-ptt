@@ -905,7 +905,7 @@ main > .error {
   border-radius: 50%;
   pointer-events: none;
 }
-.device-canvas-wrap canvas { height: max(360px, calc(100dvh - 210px)); position: relative; }
+.device-canvas-wrap canvas { height: max(360px, calc(100dvh - 224px)); position: relative; }
 .device-model-note { top: 18px; left: 20px; color: #535e70; letter-spacing: 0.1em; font-weight: 500; }
 .device-model-note > span { font-size: 17px; }
 .device-model-note small { color: #939baa; font-size: 9px; }

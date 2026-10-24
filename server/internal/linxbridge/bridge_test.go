@@ -19,6 +19,9 @@ func TestDeviceHello(t *testing.T) {
 	if got.Type != "hello" || got.Transport != "websocket" || got.Version != 1 {
 		t.Fatalf("unexpected hello: %+v", got)
 	}
+	if got.Features.(map[string]any)["mcp"] != false {
+		t.Fatal("cloud MCP must not advertise unsupported device MCP")
+	}
 	if got.AudioParams.Format != "pcm" || got.AudioParams.SampleRate != 16000 || got.AudioParams.FrameSize != 320 {
 		t.Fatalf("unexpected audio params: %+v", got.AudioParams)
 	}

@@ -195,7 +195,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func deviceHello() hello {
 	return hello{
-		Type: "hello", Version: 1, Features: map[string]any{"mcp": true}, Transport: "websocket",
+		Type: "hello", Version: 1, Features: map[string]any{"mcp": false}, Transport: "websocket",
 		AudioParams: audioParams{Format: "pcm", SampleRate: 16000, Channels: 1, BitDepth: 16, Endianness: "little", FrameDuration: 20, FrameSize: 320, PlayBufferDuration: 1000},
 	}
 }

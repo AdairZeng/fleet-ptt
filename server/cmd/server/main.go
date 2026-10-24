@@ -43,12 +43,12 @@ func main() {
 	if !tokens.Configured() {
 		log.Print("QINIU_ACCESS_KEY, QINIU_SECRET_KEY, or QINIU_RTN_APP_ID is empty; GET /api/v1/channels/{id}/rtn-token will fail until they are set")
 	}
-	linxToken := os.Getenv("LINX_CHAT_TOKEN")
+	linxToken := os.Getenv("LINX_MCP_TOKEN")
 	if linxToken == "" {
-		log.Print("LINX_CHAT_TOKEN is empty; POST /api/v1/linx/chat will reject callbacks until it is set")
+		log.Print("LINX_MCP_TOKEN is empty; /api/v1/mcp will reject requests until it is set")
 	}
 	if base := publicBaseURL(os.Getenv("PUBLIC_BASE_URL")); base != "" {
-		log.Printf("linx chat callback: %s/api/v1/linx/chat", base)
+		log.Printf("linx MCP endpoint: %s/api/v1/mcp", base)
 	}
 	provision := linxbridge.ProvisionConfig{
 		APIKey: os.Getenv("LINX_API_KEY"), AgentID: os.Getenv("LINX_AGENT_ID"),
@@ -58,7 +58,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(staticDir, svc, channels, tokens, linxToken, bridge),
+		Handler:           newHandler(staticDir, svc, channels, tokens, linxToken, provision.AgentID, bridge),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

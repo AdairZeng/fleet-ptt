@@ -165,7 +165,7 @@ func newMuxWithSigner(svc *user.Service, signer rtn.Signer) http.Handler {
 
 func newMuxWithLinx(svc *user.Service, signer rtn.Signer, linxToken string) http.Handler {
 	mux := http.NewServeMux()
-	api.Register(mux, svc, &channel.Service{Store: svc.Store}, signer, linxToken)
+	api.Register(mux, svc, &channel.Service{Store: svc.Store}, signer, linxToken, "test-agent")
 	return &fixtureMux{Handler: mux, users: svc}
 }
 

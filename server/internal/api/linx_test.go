@@ -1,344 +1,225 @@
 package api_test
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/coder/websocket"
+	"time"
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 )
 
-func TestLinxChatSSE(t *testing.T) {
-	const (
-		token   = "linx-test-token"
-		device  = "669C4BDA13EA"
-		session = "session_12345"
-	)
-	svc := newService(t)
-	h := newMuxWithLinx(svc, rtn.Signer{}, token)
-	res := postSession(t, h, `{"nickname":"老王","device_id":"`+device+`"}`)
-	if res.Code != http.StatusOK {
-		t.Fatalf("session %d %s", res.Code, res.Body)
-	}
+type mcpReply struct {
+	Result struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool `json:"isError"`
+	} `json:"result"`
+	Error json.RawMessage `json:"error"`
+}
 
-	rec := postLinx(t, h, token, linxBody(device, "建一个装货频道", session))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+func (r mcpReply) text() string {
+	if len(r.Result.Content) == 0 {
+		return ""
 	}
-	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream; charset=utf-8" {
-		t.Fatalf("content-type %q", ct)
-	}
-	events := parseSSE(t, rec.Body.String())
-	if len(events) != 2 {
-		t.Fatalf("events %#v", events)
-	}
-	if events[0]["event"] != "message" || events[0]["type"] != "chat" || events[0]["session_id"] != session {
-		t.Fatalf("message %#v", events[0])
-	}
-	details, _ := events[0]["details"].(map[string]any)
-	answer, _ := details["answer"].(string)
-	if details["intent"] != "create_channel" || !strings.Contains(answer, "已创建装货。口令是 ") || !strings.Contains(answer, "、") {
-		t.Fatalf("details %#v", details)
-	}
-	if events[1]["event"] != "message_end" || events[1]["session_id"] != session {
-		t.Fatalf("end %#v", events[1])
-	}
-	if _, ok := events[1]["type"]; ok {
-		t.Fatalf("message_end has type %#v", events[1])
-	}
+	return r.Result.Content[0].Text
+}
 
-	echo := postLinx(t, h, token, linxBody(device, "你好车队", "sid/keep"))
-	echoEvents := parseSSE(t, echo.Body.String())
-	echoDetails, _ := echoEvents[0]["details"].(map[string]any)
-	if echo.Code != http.StatusOK || echoDetails["answer"] != "没有识别到操作。可以说创建装货频道、加入口令、切到装货、开始对讲或结束对讲" || echoEvents[0]["session_id"] != "sid/keep" {
-		t.Fatalf("echo status %d body %s", echo.Code, echo.Body)
-	}
+type mcpClient struct {
+	t        *testing.T
+	srv      *httptest.Server
+	endpoint string
+	headers  http.Header
+	events   chan string
+	id       int
+}
 
-	badCode := postLinx(t, h, token, linxBody(device, "加入口令 384291", "s-bad-code"))
-	if answer := sseAnswer(t, badCode.Body.String()); badCode.Code != http.StatusOK || answer != "口令不正确" {
-		t.Fatalf("bad code status %d answer %q", badCode.Code, answer)
+func newMCPClient(t *testing.T, srv *httptest.Server, device, session string) *mcpClient {
+	t.Helper()
+	c := &mcpClient{t: t, srv: srv, headers: make(http.Header), events: make(chan string, 16)}
+	c.headers.Set("Authorization", "Bearer linx-test-token")
+	c.headers.Set("X-Linx-Device-Id", device)
+	c.headers.Set("X-Linx-Agent-Id", "test-agent")
+	c.headers.Set("X-Linx-Session-Id", session)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/mcp", nil)
+	req.Header = c.headers.Clone()
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		t.Fatalf("SSE %d %s", res.StatusCode, b)
+	}
+	t.Cleanup(func() { res.Body.Close() })
+	go func() {
+		defer close(c.events)
+		scan := bufio.NewScanner(res.Body)
+		for scan.Scan() {
+			if data, ok := strings.CutPrefix(scan.Text(), "data: "); ok {
+				c.events <- data
+			}
+		}
+	}()
+	c.endpoint = c.next()
+	c.rpc("initialize", map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "test", "version": "1"}})
+	c.post(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	return c
+}
+func (c *mcpClient) next() string {
+	c.t.Helper()
+	select {
+	case ev := <-c.events:
+		return ev
+	case <-time.After(5 * time.Second):
+		c.t.Fatal("MCP response timed out")
+		return ""
+	}
+}
+func (c *mcpClient) post(body any) {
+	c.t.Helper()
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, c.srv.URL+c.endpoint, bytes.NewReader(b))
+	req.Header = c.headers.Clone()
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.srv.Client().Do(req)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(res.Body)
+		c.t.Fatalf("POST %d %s", res.StatusCode, b)
+	}
+}
+func (c *mcpClient) rpc(method string, params any) mcpReply {
+	c.t.Helper()
+	c.id++
+	c.post(map[string]any{"jsonrpc": "2.0", "id": c.id, "method": method, "params": params})
+	var result mcpReply
+	if err := json.Unmarshal([]byte(c.next()), &result); err != nil {
+		c.t.Fatal(err)
+	}
+	return result
+}
+func (c *mcpClient) call(name string, args any) mcpReply {
+	return c.rpc("tools/call", map[string]any{"name": name, "arguments": args})
+}
+func requireAnswer(t *testing.T, r mcpReply, want string) {
+	t.Helper()
+	if len(r.Error) > 0 || r.Result.IsError || !strings.Contains(r.text(), want) {
+		t.Fatalf("want %q got %+v", want, r)
 	}
 }
 
-func TestLinxChatRejectsIllegalCallbacks(t *testing.T) {
-	const device = "device-linx"
+func TestLinxMCPBusinessFlow(t *testing.T) {
 	svc := newService(t)
-	open := newMuxWithLinx(svc, rtn.Signer{}, "")
-	res := postSession(t, open, `{"nickname":"老王","device_id":"`+device+`"}`)
-	if res.Code != http.StatusOK {
-		t.Fatalf("session %d %s", res.Code, res.Body)
-	}
-	var sess struct {
-		SessionToken string `json:"session_token"`
-	}
-	decode(t, res, &sess)
-
-	unconfigured := postLinx(t, open, "anything", linxBody(device, "你好", "s-1"))
-	if unconfigured.Code != http.StatusInternalServerError || !strings.Contains(unconfigured.Body.String(), "LINX_CHAT_TOKEN") {
-		t.Fatalf("unconfigured %d %s", unconfigured.Code, unconfigured.Body)
-	}
-
 	h := newMuxWithLinx(svc, rtn.Signer{}, "linx-test-token")
-	cases := []struct {
-		name   string
-		token  string
-		body   string
-		status int
-	}{
-		{"missing token", "", linxBody(device, "你好", "s-1"), http.StatusUnauthorized},
-		{"wrong token", "other-token", linxBody(device, "你好", "s-1"), http.StatusUnauthorized},
-		{"session token", sess.SessionToken, linxBody(device, "你好", "s-1"), http.StatusUnauthorized},
-		{"unknown device", "linx-test-token", linxBody("missing-device", "你好", "s-1"), http.StatusNotFound},
-		{"bad json", "linx-test-token", `{`, http.StatusBadRequest},
-		{"report", "linx-test-token", `{"auth":{"device_id":"` + device + `"},"type":"report","details":{"msg":"你好","session_id":"s-1"}}`, http.StatusBadRequest},
-		{"no device", "linx-test-token", `{"auth":{},"type":"chat","details":{"msg":"你好","session_id":"s-1"}}`, http.StatusBadRequest},
-		{"no msg", "linx-test-token", linxBody(device, "  ", "s-1"), http.StatusBadRequest},
-		{"no session", "linx-test-token", linxBody(device, "你好", ""), http.StatusBadRequest},
-	}
-	for _, tc := range cases {
-		rec := postLinx(t, h, tc.token, tc.body)
-		if rec.Code != tc.status {
-			t.Fatalf("%s status %d body %s", tc.name, rec.Code, rec.Body)
-		}
-		if strings.HasPrefix(rec.Header().Get("Content-Type"), "text/event-stream") {
-			t.Fatalf("%s leaked sse %s", tc.name, rec.Body)
-		}
-	}
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/linx/chat", nil)
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("get %d", rec.Code)
-	}
-}
-
-func TestLinxVoiceCreateJoinSwitchAndTalk(t *testing.T) {
-	const token = "linx-test-token"
-	svc := newService(t)
-	h := newMuxWithLinx(svc, rtn.Signer{}, token)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-
-	captainToken, captainID := sessionPair(t, h, "老王", "device-captain")
-	driverToken, _ := sessionPair(t, h, "司机乙", "device-driver")
-
-	captain := dialWS(t, srv, captainToken, false)
-	captainBox := collectDeviceWS(t, captain, true)
-	events := waitLinx(t, captainBox, 3, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-captain", "建一个装货频道", "s-create"))
-	})
-	createAnswer := sseAnswer(t, events.rec.Body.String())
-	got := events.fresh
-	if got[0].Type != "channel_created" || got[0].Name != "装货" || got[0].JoinCode == "" {
-		t.Fatalf("channel_created %#v", got[0])
+	captainToken, captainID := sessionPair(t, h, "老王", "captain-mac")
+	driverToken, _ := sessionPair(t, h, "司机乙", "driver-mac")
+	captainWS := dialWS(t, srv, captainToken, false)
+	captainBox := collectDeviceWS(t, captainWS, true)
+	driverWS := dialWS(t, srv, driverToken, false)
+	collectDeviceWS(t, driverWS, true)
+	captain := newMCPClient(t, srv, "captain-mac", "voice-captain")
+	driver := newMCPClient(t, srv, "driver-mac", "voice-driver")
+	requireAnswer(t, captain.call("create_channel", map[string]any{"name": "装货"}), "已创建装货")
+	captainBox.wait(t, 3)
+	loading := captainBox.snapshot()[0]
+	requireAnswer(t, driver.call("join_channel", map[string]any{"code": loading.JoinCode}), "请说确认加入或取消")
+	if strings.Contains(getAuth(t, h, "/api/v1/me", driverToken).Body.String(), loading.ChannelID) {
+		t.Fatal("joined before confirmation")
 	}
-	if !strings.Contains(createAnswer, "已创建装货。"+speakDigits(got[0].JoinCode)) || got[2].Type != "notice" || got[2].Message != createAnswer {
-		t.Fatalf("announce %q events %#v", createAnswer, got)
+	// Another device and another conversation cannot confirm this pending operation.
+	captain.call("confirm_action", map[string]any{})
+	other := newMCPClient(t, srv, "driver-mac", "other-conversation")
+	other.call("confirm_action", map[string]any{})
+	if strings.Contains(getAuth(t, h, "/api/v1/me", driverToken).Body.String(), loading.ChannelID) {
+		t.Fatal("cross-session confirmation succeeded")
 	}
-	if got[1].Type != "members" || !hasMember(got[1], captainID, "老王", false) {
-		t.Fatalf("members %#v", got[1])
-	}
-
-	loading := got[0]
-	driver := dialWS(t, srv, driverToken, false)
-	driverBox := collectDeviceWS(t, driver, true)
-	prompt := waitLinx(t, driverBox, 1, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-driver", "加入口令 "+loading.JoinCode, "s-join-1"))
-	})
-	if answer := sseAnswer(t, prompt.rec.Body.String()); answer != speakDigits(loading.JoinCode)+"。请说确认加入或取消" {
-		t.Fatalf("prompt %q", answer)
-	}
-	if prompt.fresh[0].Type != "notice" {
-		t.Fatalf("prompt event %#v", prompt.fresh[0])
-	}
-	me := getAuth(t, h, "/api/v1/me", driverToken)
-	if strings.Contains(me.Body.String(), loading.ChannelID) {
-		t.Fatalf("joined before confirm %s", me.Body)
-	}
-
-	joined := waitLinx(t, driverBox, 3, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-driver", "确认加入", "s-join-2"))
-	})
-	if answer := sseAnswer(t, joined.rec.Body.String()); answer != "已加入装货" {
-		t.Fatalf("join %q body %s", answer, joined.rec.Body)
-	}
-	if joined.fresh[0].Type != "channel_switched" || joined.fresh[0].ChannelID != loading.ChannelID || joined.fresh[0].Name != "装货" {
-		t.Fatalf("channel_switched %#v", joined.fresh)
-	}
-	if joined.fresh[2].Type != "notice" || joined.fresh[2].Message != "已加入装货" {
-		t.Fatalf("join notice %#v", joined.fresh)
-	}
-
-	captainBox.wait(t, 4)
-	_ = waitLinx(t, captainBox, 3, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-captain", "建一个卸货频道", "s-create-2"))
-	})
-	beforeTalk := len(captainBox.snapshot())
-	if res := postAuth(t, h, "/api/v1/talk/start", captainToken, `{}`); res.Code != http.StatusOK {
-		t.Fatalf("talk %d %s", res.Code, res.Body)
-	}
-	captainBox.wait(t, beforeTalk+2)
-	switched := waitLinx(t, captainBox, 5, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-captain", "切到装货", "s-switch"))
-	})
-	if answer := sseAnswer(t, switched.rec.Body.String()); answer != "已切换到装货" {
-		t.Fatalf("switch %q events %#v", answer, switched.fresh)
-	}
-	talkEndAt, switchAt := -1, -1
-	for i, ev := range switched.fresh {
+	requireAnswer(t, driver.call("confirm_action", map[string]any{}), "已加入装货")
+	requireAnswer(t, captain.call("create_channel", map[string]any{"name": "卸货"}), "已创建卸货")
+	requireAnswer(t, captain.call("talk_start", map[string]any{}), "已开始对讲")
+	requireAnswer(t, captain.call("switch_channel", map[string]any{"name": "装货"}), "已切换到装货")
+	events := captainBox.snapshot()
+	endAt, switchAt := -1, -1
+	for i, ev := range events {
 		if ev.Type == "talk_end" && ev.UserID == captainID {
-			talkEndAt = i
+			endAt = i
 		}
-		if ev.Type == "channel_switched" && ev.ChannelID == loading.ChannelID && ev.Name == "装货" {
+		if ev.Type == "channel_switched" && ev.ChannelID == loading.ChannelID {
 			switchAt = i
 		}
 	}
-	if talkEndAt < 0 || switchAt < 0 || talkEndAt > switchAt {
-		t.Fatalf("order talk_end %d switch %d events %#v", talkEndAt, switchAt, switched.fresh)
+	if endAt < 0 || switchAt < endAt {
+		t.Fatalf("talk end before switch: %+v", events)
 	}
+	miss := captain.call("switch_channel", map[string]any{"name": "不存在"})
+	if !miss.Result.IsError {
+		t.Fatalf("business failure lost: %+v", miss)
+	}
+	requireAnswer(t, captain.call("list_my_channels", map[string]any{}), "装货")
+	requireAnswer(t, captain.call("set_volume", map[string]any{"level": 0}), "音量已调到0")
+	requireAnswer(t, driver.call("set_nickname", map[string]any{"name": "小张"}), "请说确认或取消")
+	requireAnswer(t, driver.call("confirm_action", map[string]any{}), "小张")
+	if !strings.Contains(getAuth(t, h, "/api/v1/me", driverToken).Body.String(), "小张") {
+		t.Fatal("nickname not persisted")
+	}
+	requireAnswer(t, driver.call("set_nickname", map[string]any{"name": "小李"}), "确认")
+	driver.call("cancel_action", map[string]any{})
+	driver.call("confirm_action", map[string]any{})
+	if strings.Contains(getAuth(t, h, "/api/v1/me", driverToken).Body.String(), "小李") {
+		t.Fatal("cancelled nickname applied")
+	}
+}
 
-	missed := waitLinx(t, captainBox, 1, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-captain", "切到不存在", "s-miss"))
-	})
-	if missed.rec.Code != http.StatusOK {
-		t.Fatalf("miss status %d %s", missed.rec.Code, missed.rec.Body)
-	}
-	if answer := sseAnswer(t, missed.rec.Body.String()); answer != "未匹配到频道" {
-		t.Fatalf("miss %q", answer)
-	}
-	if missed.fresh[0].Type != "error" || missed.fresh[0].Message != "未匹配到频道" {
-		t.Fatalf("miss event %#v", missed.fresh)
-	}
-	still := getAuth(t, h, "/api/v1/me", captainToken)
-	if !strings.Contains(still.Body.String(), loading.ChannelID) {
-		t.Fatalf("left channel after miss %s", still.Body)
-	}
-
-	started := waitLinx(t, captainBox, 3, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-captain", "开始对讲", "s-talk"))
-	})
-	if answer := sseAnswer(t, started.rec.Body.String()); answer != "已开始对讲" {
-		t.Fatalf("talk_start %q events %#v", answer, started.fresh)
-	}
-	var talkStart wsEvent
-	for _, ev := range started.fresh {
-		if ev.Type == "talk_start" {
-			talkStart = ev
+func TestLinxMCPRejectsInvalidTools(t *testing.T) {
+	svc := newService(t)
+	h := newMuxWithLinx(svc, rtn.Signer{}, "linx-test-token")
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	token, _ := sessionPair(t, h, "老王", "captain-mac")
+	c := newMCPClient(t, srv, "captain-mac", "voice-1")
+	for _, tc := range []struct {
+		name string
+		args any
+	}{
+		{"create_channel", map[string]any{"name": "装货", "device_id": "victim"}},
+		{"create_channel", map[string]any{"name": " "}},
+		{"create_channel", map[string]any{"name": nil}},
+		{"join_channel", map[string]any{"name": "装货", "code": "ABCDEF"}},
+		{"switch_channel", map[string]any{"index": 1.5}},
+		{"set_volume", map[string]any{"level": 101}},
+		{"set_volume", map[string]any{"level": nil}},
+		{"set_volume", map[string]any{"level": 50, "adjustment": "up"}},
+		{"talk_start", map[string]any{"device_id": "victim"}},
+		{"unknown", map[string]any{}},
+	} {
+		r := c.call(tc.name, tc.args)
+		if len(r.Error) == 0 && !r.Result.IsError {
+			t.Errorf("accepted %s %+v: %+v", tc.name, tc.args, r)
 		}
 	}
-	if talkStart.ChannelID != loading.ChannelID || talkStart.UserID != captainID {
-		t.Fatalf("talk_start event %#v", started.fresh)
+	unknown := newMCPClient(t, srv, "unknown-mac", "voice-1")
+	r := unknown.call("list_my_channels", map[string]any{})
+	if !r.Result.IsError && len(r.Error) == 0 {
+		t.Fatal("unknown device accepted")
 	}
-
-	beforeList := len(driverBox.snapshot())
-	listed := postLinx(t, h, token, linxBody("device-captain", "我有哪些频道", "s-list"))
-	listAnswer := sseAnswer(t, listed.Body.String())
-	if !strings.Contains(listAnswer, "装货") || !strings.Contains(listAnswer, "卸货") || !strings.Contains(listAnswer, "当前是装货") {
-		t.Fatalf("list %q", listAnswer)
+	// Device-dependent actions must fail without an online device acknowledgement.
+	r = c.call("set_volume", map[string]any{"level": 50})
+	if !r.Result.IsError {
+		t.Fatalf("offline action reported success: %+v", r)
 	}
-	driverBox.wait(t, beforeList+2)
-
-	byName := waitLinx(t, driverBox, 3, func() *httptest.ResponseRecorder {
-		return postLinx(t, h, token, linxBody("device-driver", "进入卸货", "s-name"))
-	})
-	if answer := sseAnswer(t, byName.rec.Body.String()); answer != "已加入卸货" {
-		t.Fatalf("name join %q events %#v", answer, byName.fresh)
+	if strings.Contains(getAuth(t, h, "/api/v1/me", token).Body.String(), "channel_id") {
+		t.Fatal("invalid args changed channel")
 	}
-	if byName.fresh[0].Type != "channel_switched" || byName.fresh[0].Name != "卸货" {
-		t.Fatalf("name switch %#v", byName.fresh)
-	}
-
-	_ = captain.Close(websocket.StatusNormalClosure, "")
-	_ = driver.Close(websocket.StatusNormalClosure, "")
-}
-
-type linxWait struct {
-	rec   *httptest.ResponseRecorder
-	fresh []wsEvent
-}
-
-func waitLinx(t *testing.T, box *wsBox, n int, fn func() *httptest.ResponseRecorder) linxWait {
-	t.Helper()
-	before := len(box.snapshot())
-	rec := fn()
-	box.wait(t, before+n)
-	all := box.snapshot()
-	if len(all) < before+n {
-		t.Fatalf("events %d want %d", len(all), before+n)
-	}
-	return linxWait{rec: rec, fresh: all[before : before+n]}
-}
-
-func sseAnswer(t *testing.T, body string) string {
-	t.Helper()
-	events := parseSSE(t, body)
-	details, _ := events[0]["details"].(map[string]any)
-	answer, _ := details["answer"].(string)
-	if answer == "" {
-		t.Fatalf("missing answer %s", body)
-	}
-	return answer
-}
-
-func speakDigits(code string) string {
-	parts := make([]string, 0, len(code))
-	for _, r := range code {
-		parts = append(parts, string(r))
-	}
-	return "口令是 " + strings.Join(parts, "、")
-}
-
-func postLinx(t *testing.T, h http.Handler, token, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/linx/chat", strings.NewReader(body))
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	h.ServeHTTP(rec, req)
-	return rec
-}
-
-func linxBody(device, msg, session string) string {
-	payload, err := json.Marshal(map[string]any{
-		"auth": map[string]string{"device_id": device},
-		"type": "chat",
-		"details": map[string]any{
-			"msg":        msg,
-			"session_id": session,
-			"timestamp":  1640995200000,
-		},
-	})
-	if err != nil {
-		panic(err)
-	}
-	return string(payload)
-}
-
-func parseSSE(t *testing.T, body string) []map[string]any {
-	t.Helper()
-	var out []map[string]any
-	for _, chunk := range strings.Split(body, "\n\n") {
-		chunk = strings.TrimSpace(chunk)
-		if chunk == "" {
-			continue
-		}
-		line, ok := strings.CutPrefix(chunk, "data: ")
-		if !ok {
-			t.Fatalf("sse chunk %q", chunk)
-		}
-		var ev map[string]any
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, ev)
-	}
-	return out
 }

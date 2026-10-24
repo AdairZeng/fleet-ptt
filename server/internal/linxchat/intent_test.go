@@ -2,49 +2,6 @@ package linxchat
 
 import "testing"
 
-func TestParse(t *testing.T) {
-	cases := []struct {
-		msg    string
-		intent Intent
-		name   string
-		code   string
-		index  int
-	}{
-		{"建一个装货频道", IntentCreateChannel, "装货", "", 0},
-		{"创建一个卸货群", IntentCreateChannel, "卸货", "", 0},
-		{"建群", IntentCreateChannel, "", "", 0},
-		{"建议建一个频道", IntentCreateChannel, "", "", 0},
-		{"加入口令 384291", IntentJoinChannel, "", "384291", 0},
-		{"加入口令 3、8、4、2、9、1", IntentJoinChannel, "", "384291", 0},
-		{"口令是 3842K9", IntentJoinChannel, "", "3842K9", 0},
-		{"进入装货", IntentJoinChannel, "装货", "", 0},
-		{"进装货群", IntentJoinChannel, "装货", "", 0},
-		{"3842K9", IntentJoinChannel, "", "3842K9", 0},
-		{"切换到卸货", IntentSwitchChannel, "卸货", "", 0},
-		{"切到装货频道", IntentSwitchChannel, "装货", "", 0},
-		{"切到频道 2", IntentSwitchChannel, "", "", 2},
-		{"切到第二个", IntentSwitchChannel, "", "", 2},
-		{"开始对讲", IntentTalkStart, "", "", 0},
-		{"结束对讲", IntentTalkEnd, "", "", 0},
-		{"我有哪些频道", IntentListChannels, "", "", 0},
-		{"我的频道", IntentListChannels, "", "", 0},
-		{"确认加入", IntentConfirmJoin, "", "", 0},
-		{"取消", IntentCancelJoin, "", "", 0},
-		{"今天天气怎么样", IntentEcho, "", "", 0},
-		{"  建议休息  ", IntentEcho, "", "", 0},
-		{"进度怎么样", IntentEcho, "", "", 0},
-	}
-	for _, tc := range cases {
-		got := Parse(tc.msg)
-		if got.Intent != tc.intent || got.Name != tc.name || got.Code != tc.code || got.Index != tc.index {
-			t.Fatalf("Parse(%q) = %+v, want intent %s name %q code %q index %d", tc.msg, got, tc.intent, tc.name, tc.code, tc.index)
-		}
-	}
-	if got := Parse("  建议休息  "); got.Text != "建议休息" {
-		t.Fatalf("text %q", got.Text)
-	}
-}
-
 func TestSpeakCodeAndAnswers(t *testing.T) {
 	if got := SpeakCode("384291"); got != "口令是 3、8、4、2、9、1" {
 		t.Fatalf("speak %q", got)

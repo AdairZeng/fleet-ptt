@@ -9,22 +9,20 @@ import (
 
 	"github.com/AdairZeng/fleet-ptt/server/internal/channel"
 	"github.com/AdairZeng/fleet-ptt/server/internal/linxbridge"
-	"github.com/AdairZeng/fleet-ptt/server/internal/linxchat"
 	"github.com/AdairZeng/fleet-ptt/server/internal/rtn"
 	"github.com/AdairZeng/fleet-ptt/server/internal/store"
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 	"github.com/AdairZeng/fleet-ptt/server/internal/ws"
 )
 
-// Register 挂上会话、当前用户、频道、RTN RoomToken、WebSocket 信令，以及灵矽 Chat 回调。
-// linxToken 是 LINX_CHAT_TOKEN。为空时回调一律拒绝。
-func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string, managers ...*linxbridge.Manager) {
+// Register 挂上会话、当前用户、频道、RTN RoomToken、WebSocket 信令，以及灵矽云端 MCP。
+// linxToken 是 LINX_MCP_TOKEN，agentID 限定可信智能体。
+func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken, agentID string, managers ...*linxbridge.Manager) {
 	var bridge *linxbridge.Manager
 	if len(managers) > 0 {
 		bridge = managers[0]
 	}
 	hub := ws.NewHub(users, channels)
-	gate := linxchat.NewJoinGate(linxchat.JoinConfirmTTL)
 	mux.HandleFunc("POST /api/v1/session", CreateSession(users))
 	mux.HandleFunc("POST /api/v1/device/register", RegisterDevice(users))
 	mux.HandleFunc("POST /api/v1/device/boot", DeviceBoot(users, bridge))
@@ -39,7 +37,9 @@ func Register(mux *http.ServeMux, users *user.Service, channels *channel.Service
 	mux.HandleFunc("POST /api/v1/talk/end", TalkEnd(users, hub))
 	mux.HandleFunc("GET /api/v1/device/ws", hub.ServeHTTP)
 	mux.Handle("GET /api/v1/linx/ws", linxbridge.Handler{Users: users, Bridge: bridge})
-	mux.HandleFunc("POST /api/v1/linx/chat", LinxChat(users, channels, hub, gate, linxToken))
+	mcp := newLinxMCP(users, channels, hub, linxToken, agentID)
+	mux.HandleFunc("GET /api/v1/mcp", mcp.ServeSSE)
+	mux.HandleFunc("POST /api/v1/mcp/message", mcp.ServeMessage)
 }
 
 // CreateSession 接受 { nickname, device_id }，返回 user_id 与 session_token。

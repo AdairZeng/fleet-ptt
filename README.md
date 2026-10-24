@@ -12,9 +12,11 @@
 
 仓库仅提供 [`.env.example`](.env.example)。本地复制为 `.env` 后填写真实值，勿提交 `.env`。
 
-灵矽回调地址为 `{PUBLIC_BASE_URL}/api/v1/linx/chat`，请求使用 `Authorization: Bearer <LINX_CHAT_TOKEN>`。回调负责将识别后的意图交给小路业务层，业务层执行频道、对讲和设备动作，并返回适合 TTS 的回答。
+灵矽智能体负责语音识别、语义理解、参数追问和语音播报，通过云端 MCP 调用 fleet-ptt 的频道、对讲和设备工具。MCP SSE 地址为 `{PUBLIC_BASE_URL}/api/v1/mcp`，在灵矽私有自定义 MCP 中配置请求头 `Authorization: Bearer <LINX_MCP_TOKEN>`，并把 MCP 关联到“小路”智能体。配置步骤见 [灵矽接入方案](docs/linx-access.md)。
 
-3D 原型通过统一设备协议连接真实灵汐设备 WebSocket。模拟设备注册时自动生成 `device_id`、`mac_id` 和 `device_credential`；真实硬件使用工厂预配的同名字段。按下电源键后，服务端按该设备的 `mac_id` 检查并自动完成绑定，随后进入昵称设置和业务流程。完整本地联调需要用公网隧道暴露 `/api/v1/linx/chat`。
+3D 原型和真实硬件使用统一设备协议。模拟设备注册时自动生成 `device_id`、`mac_id` 和 `device_credential`；真实硬件使用预配的同名字段。按下电源键后，服务端按该设备的 `mac_id` 检查并自动完成灵矽绑定，随后进入昵称设置和业务流程。指令音频通过 `/api/v1/linx/ws` 桥接到灵矽，普通对讲音频走七牛 RTN。
+
+完整本地联调需要公网隧道暴露 MCP 的 SSE 与消息接口，并配置真实灵矽和 RTN 凭证。当前尚未完成真实灵矽音频、工具调用和双端对讲的联合验收；首次语音设置和持续云端唤醒仍待实现与验证。
 
 ## 本地启动
 

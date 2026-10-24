@@ -7,8 +7,10 @@ import {
   type DeviceEvent,
 } from './controller.ts'
 import { readJoinLocation } from '../state/joinLink.ts'
+import { loadDeviceCredential, registerDevice } from '../state/device.ts'
 import {
   createSession,
+  authHeaders,
   loadSession,
   saveSession,
   type Session,
@@ -30,6 +32,8 @@ export function useDeviceController() {
     const revision = lifecycle.current
     const next = await createSession(nickname, session)
     if (revision !== lifecycle.current) throw new Error('设备已关机，设置结果未应用')
+    const response = await fetch('/api/v1/linx/bind', { method: 'POST', headers: authHeaders(next) })
+    if (!response.ok) throw new Error('灵汐设备绑定失败')
     saveSession(next)
     setSession(next)
     setDisplayNickname(next.nickname)
@@ -72,11 +76,26 @@ export function useDeviceController() {
 
   useEffect(() => {
     if (device.phase !== 'booting') return
-    const timer = window.setTimeout(() => {
-      dispatchDevice({ type: 'BOOT_READY', hasChannel: false })
-    }, 250)
-    return () => window.clearTimeout(timer)
-  }, [device.phase])
+    let cancelled = false
+    async function boot() {
+      try {
+        const credential = loadDeviceCredential() ?? await registerDevice(session?.session_token)
+        const headers = session ? authHeaders(session) : new Headers({
+          'X-Device-ID': credential.device_id,
+          'X-Device-Credential': credential.device_credential,
+        })
+        const response = await fetch('/api/v1/linx/bind', { method: 'POST', headers })
+        if (!response.ok) throw new Error('灵汐设备绑定失败')
+        await new Promise((resolve) => window.setTimeout(resolve, 250))
+        if (!cancelled) dispatchDevice({ type: 'BOOT_READY', hasChannel: false })
+      } catch (error) {
+        if (!cancelled) dispatchDevice({ type: 'FAIL' })
+        setSoundError(error instanceof Error ? error.message : '设备启动失败')
+      }
+    }
+    void boot()
+    return () => { cancelled = true }
+  }, [device.phase, session])
 
   const onDeviceAction = (action: DeviceAction) => {
     if (action === 'power') {

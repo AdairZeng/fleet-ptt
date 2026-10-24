@@ -50,7 +50,7 @@ func main() {
 	if base := publicBaseURL(os.Getenv("PUBLIC_BASE_URL")); base != "" {
 		log.Printf("linx chat callback: %s/api/v1/linx/chat", base)
 	}
-	bridge := linxbridge.Config{
+	bridgeConfig := linxbridge.Config{
 		URL:      getenv("LINX_WS_URL", linxbridge.DefaultURL),
 		DeviceID: os.Getenv("LINX_DEVICE_ID"),
 		Token:    os.Getenv("LINX_DEVICE_TOKEN"),
@@ -59,20 +59,7 @@ func main() {
 		APIKey: os.Getenv("LINX_API_KEY"), AgentID: os.Getenv("LINX_AGENT_ID"), DeviceID: os.Getenv("LINX_DEVICE_ID"),
 		APIBaseURL: getenv("LINX_API_BASE_URL", linxbridge.DefaultAPIBaseURL), OTAURL: getenv("LINX_OTA_URL", linxbridge.DefaultOTAURL),
 	}
-	if provision.Ready() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		provisioned, provisionErr := linxbridge.Provision(ctx, provision)
-		cancel()
-		if provisionErr != nil {
-			log.Printf("linx device provisioning failed: %v", provisionErr)
-		} else {
-			bridge = provisioned
-			log.Printf("linx device provisioned through API: %s", bridge.DeviceID)
-		}
-	}
-	if !bridge.Ready() {
-		log.Print("LINX_DEVICE_ID or LINX_DEVICE_TOKEN is empty; /api/v1/linx/ws is disabled")
-	}
+	bridge := linxbridge.NewManager(bridgeConfig, provision)
 
 	srv := &http.Server{
 		Addr:              addr,

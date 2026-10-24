@@ -64,7 +64,7 @@ flowchart LR
 
 ### 4.1 自动设备绑定
 
-服务端配置灵矽 API Key、智能体 ID 和虚拟设备 MAC 后，启动时调用官方设备 API 完成设备准备：先向 OTA 接口上报设备信息；未绑定时读取返回的 6 位激活码并调用 `POST /xiaozhi/device/bind/{agentId}/{deviceCode}`；随后调用 OTA 激活确认并重新上报，取得 WebSocket URL 和设备 Token。已绑定设备直接重新上报并复用返回的 WebSocket Token。验证码只在服务端 API 链路中使用，不需要用户打开控制台手动输入。
+服务端配置灵矽 API Key、智能体 ID 和虚拟设备 MAC 后，在 3D 原型按下电源键时检查设备状态。已有业务会话使用会话令牌，首次开机使用服务端生成的设备 ID 和独立设备凭证；已绑定设备直接复用 WebSocket 凭证，未绑定时先向 OTA 接口上报设备信息，读取返回的 6 位激活码并调用 `POST /xiaozhi/device/bind/{agentId}/{deviceCode}`，随后调用 OTA 激活确认并重新上报，取得 WebSocket URL 和设备 Token。验证码只在服务端 API 链路中使用，不需要用户打开控制台手动输入。
 
 API Key、设备 Token 和智能体 ID 只保存在服务端环境变量，不返回浏览器、不写入数据库，也不提交到仓库。
 

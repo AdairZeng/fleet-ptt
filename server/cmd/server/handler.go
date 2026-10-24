@@ -14,10 +14,10 @@ import (
 	"github.com/AdairZeng/fleet-ptt/server/internal/user"
 )
 
-func newHandler(staticDir string, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string, bridges ...linxbridge.Config) http.Handler {
+func newHandler(staticDir string, users *user.Service, channels *channel.Service, tokens rtn.Signer, linxToken string, managers ...*linxbridge.Manager) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.Healthz)
-	api.Register(mux, users, channels, tokens, linxToken, bridges...)
+	api.Register(mux, users, channels, tokens, linxToken, managers...)
 	if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
 		mux.Handle("/", staticSite(staticDir))
 	}

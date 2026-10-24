@@ -204,6 +204,7 @@ sequenceDiagram
 | POST | `/api/v1/talk/end` | 请求结束上行 |
 | POST | `/api/v1/linx/chat` | 接收灵矽 Chat SSE 意图 |
 | GET | `/api/v1/linx/ws` | 3D 原型到真实灵矽设备 WebSocket 的服务端桥接 |
+| POST | `/api/v1/linx/bind` | 开机后检查并自动完成灵矽设备绑定；支持业务会话或设备凭证认证 |
 
 ### 浏览器设备注册
 
@@ -285,9 +286,9 @@ sequenceDiagram
 | `SESSION_SECRET` | 设备/用户会话签名 |
 | `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_RTN_APP_ID` | 七牛 RTN 凭证 |
 | `LINX_CHAT_TOKEN` | 灵矽 Chat 回调校验 |
-| `LINX_API_KEY` / `LINX_AGENT_ID` | 灵矽官方设备 API 认证和智能体 ID；服务启动时自动绑定虚拟设备 |
+| `LINX_API_KEY` / `LINX_AGENT_ID` | 灵矽官方设备 API 认证和智能体 ID；3D 原型按下电源键时检查并自动绑定虚拟设备 |
 | `LINX_DEVICE_ID` | 虚拟设备 MAC/伪 MAC；用于 OTA、设备绑定和 WebSocket 握手 |
-| `LINX_DEVICE_TOKEN` | 已绑定设备的 WebSocket Token；启用自动绑定时由服务启动流程获取 |
+| `LINX_DEVICE_TOKEN` | 已绑定设备的 WebSocket Token；已配置时开机直接复用，未配置时由开机绑定流程获取 |
 | `LINX_API_BASE_URL` / `LINX_OTA_URL` | 灵矽设备 API 和 OTA 地址，默认使用官方地址 |
 | `PUBLIC_BASE_URL` | 灵矽访问本服务的公网基址 |
 

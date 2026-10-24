@@ -32,13 +32,54 @@ type Config struct {
 	Token    string
 }
 
+// Manager keeps the active device credentials in memory and provisions them
+// only when an authenticated device asks to power on.
+type Manager struct {
+	mu        sync.RWMutex
+	config    Config
+	provision ProvisionConfig
+}
+
+func NewManager(config Config, provision ProvisionConfig) *Manager {
+	return &Manager{config: config, provision: provision}
+}
+
+func (m *Manager) Config() Config {
+	if m == nil {
+		return Config{}
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config
+}
+
+func (m *Manager) Ensure(ctx context.Context) (Config, error) {
+	if m == nil {
+		return Config{}, errors.New("服务器未配置灵矽设备桥接")
+	}
+	m.mu.RLock()
+	current, provision := m.config, m.provision
+	m.mu.RUnlock()
+	if current.Ready() {
+		return current, nil
+	}
+	provisioned, err := Provision(ctx, provision)
+	if err != nil {
+		return Config{}, err
+	}
+	m.mu.Lock()
+	m.config = provisioned
+	m.mu.Unlock()
+	return provisioned, nil
+}
+
 func (c Config) Ready() bool {
 	return strings.TrimSpace(c.URL) != "" && strings.TrimSpace(c.DeviceID) != "" && strings.TrimSpace(c.Token) != ""
 }
 
 type Handler struct {
 	Users  *user.Service
-	Config Config
+	Bridge *Manager
 }
 
 type localMessage struct {
@@ -88,7 +129,8 @@ func (w *writeConn) raw(ctx context.Context, typ websocket.MessageType, payload 
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !h.Config.Ready() {
+	config := h.Bridge.Config()
+	if !config.Ready() {
 		http.Error(w, "服务器未配置灵矽设备桥接", http.StatusServiceUnavailable)
 		return
 	}
@@ -103,7 +145,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "未登录或会话无效", http.StatusUnauthorized)
 		return
 	}
-	if err := h.bindDevice(r.Context(), u); err != nil {
+	if err := h.bindDevice(r.Context(), u, config.DeviceID); err != nil {
 		log.Printf("linx bridge: bind device: %v", err)
 		http.Error(w, "灵矽设备未绑定当前用户", http.StatusConflict)
 		return
@@ -119,10 +161,10 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	remote, _, err := websocket.Dial(r.Context(), h.Config.URL, &websocket.DialOptions{
+	remote, _, err := websocket.Dial(r.Context(), config.URL, &websocket.DialOptions{
 		HTTPHeader: http.Header{
-			"Authorization":    []string{"Bearer " + h.Config.Token},
-			"Device-Id":        []string{h.Config.DeviceID},
+			"Authorization":    []string{"Bearer " + config.Token},
+			"Device-Id":        []string{config.DeviceID},
 			"Client-Id":        []string{clientID},
 			"Protocol-Version": []string{"1"},
 		},
@@ -149,8 +191,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 }
 
-func (h Handler) bindDevice(ctx context.Context, u store.User) error {
-	current, err := h.Users.Store.UserByLinxDeviceID(ctx, h.Config.DeviceID)
+func (h Handler) bindDevice(ctx context.Context, u store.User, linxDeviceID string) error {
+	current, err := h.Users.Store.UserByLinxDeviceID(ctx, linxDeviceID)
 	if err == nil {
 		if current.DeviceID != u.DeviceID {
 			return errors.New("linx device belongs to another application device")
@@ -160,7 +202,7 @@ func (h Handler) bindDevice(ctx context.Context, u store.User) error {
 	if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	return h.Users.Store.BindLinxDevice(ctx, u.DeviceID, h.Config.DeviceID)
+	return h.Users.Store.BindLinxDevice(ctx, u.DeviceID, linxDeviceID)
 }
 
 func deviceHello() hello {

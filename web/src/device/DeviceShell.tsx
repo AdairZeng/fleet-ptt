@@ -24,7 +24,7 @@ type DeviceScene = {
   cleanup: () => void
 }
 
-const modelURL = '/models/xiaolu.glb?v=2'
+const modelURL = '/models/xiaolu.glb?v=3'
 
 export function DeviceShell({ children, status, onAction = () => {}, phase = 'standby', indicator }: DeviceShellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -163,12 +163,17 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
 
   return (
     <div className="device-page">
-      <section className="device-stage" aria-label="小路三维对讲机">
+      <header className="product-heading">
+        <p className="product-eyebrow">XIAOLU · VOICE COMPANION</p>
+        <h1>连接，自然发生。</h1>
+        <p>一句话，和同路的人保持连接。</p>
+      </header>
+      <section className="device-stage" aria-label="小路三维语音终端">
         <div className="device-canvas-wrap">
           <canvas ref={canvasRef} aria-hidden="true" />
           <div ref={overlayRef} className="device-screen-overlay" />
           <div className="device-model-note" aria-live="polite">
-            <span>小路 / XIAOLU</span><small>{modelState === 'loading' ? '正在加载设备' : '语音对讲终端'}</small>
+            <span>小路</span><small>{modelState === 'loading' ? '正在加载设备' : '语音对讲终端'}</small>
           </div>
           <button
             type="button"
@@ -176,7 +181,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
             aria-label="长按1.5秒开关机"
             {...pressHandlers('power')}
           >
-            长按电源
+            <span aria-hidden="true">⏻</span><small>长按开关</small>
           </button>
           <button
             type="button"
@@ -185,7 +190,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
             disabled={phase === 'off' || phase === 'booting'}
             {...pressHandlers('command')}
           >
-            指令
+            <span aria-hidden="true" className="voice-key-icon"><i /><i /><i /><i /><i /></span><small>小路</small>
           </button>
           <button
             type="button"
@@ -212,7 +217,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
               onPTTUp()
             }}
           >
-            {pttHeld ? '松开结束' : '按住说话'}
+            <span aria-hidden="true">{pttHeld ? '●' : 'PTT'}</span><small>{pttHeld ? '松开结束' : '按住说话'}</small>
           </button>
         </div>
         {createPortal(
@@ -222,7 +227,7 @@ export function DeviceShell({ children, status, onAction = () => {}, phase = 'st
           </div>,
           screenElement,
         )}
-        <button type="button" className="secondary device-reset" onClick={() => sceneRef.current?.reset()}>回正视角</button>
+        <div className="device-stage-footer"><span>语音优先 · 随时同行</span><button type="button" className="secondary device-reset" onClick={() => sceneRef.current?.reset()}>回正视角 ↗</button></div>
 
       </section>
     </div>
@@ -244,24 +249,24 @@ function createScene(
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100)
   const fixedView = window.matchMedia('(max-width: 704px), (pointer: coarse)')
   const orbit = new OrbitControls(camera, canvas)
-  orbit.target.set(0, 0.65, 0)
+  orbit.target.set(0, 0, 0)
   orbit.enablePan = false
   orbit.enableZoom = false
   orbit.minPolarAngle = Math.PI / 3
   orbit.maxPolarAngle = Math.PI * 2 / 3
   const reset = () => {
-    const distance = Math.max(7.8, 1.35 / (Math.tan(THREE.MathUtils.degToRad(16)) * camera.aspect))
-    camera.position.set(distance * 0.16, 0.9, distance)
+    const distance = Math.max(7.5, 1.38 / (Math.tan(THREE.MathUtils.degToRad(16)) * camera.aspect))
+    camera.position.set(distance * 0.12, 0.25, distance)
     orbit.enabled = !fixedView.matches
     orbit.update()
   }
   reset()
   fixedView.addEventListener('change', reset)
-  scene.add(new THREE.HemisphereLight(0xd8efff, 0x111b2c, 2.8))
+  scene.add(new THREE.HemisphereLight(0xf2f5ff, 0x6e7b8b, 3.1))
   const light = new THREE.DirectionalLight(0xffffff, 2.8)
   light.position.set(-3, 5, 5)
   scene.add(light)
-  const rim = new THREE.DirectionalLight(0x6adfff, 3)
+  const rim = new THREE.DirectionalLight(0xcce7ff, 2.4)
   rim.position.set(3, 1, -2)
   scene.add(rim)
 
@@ -338,8 +343,7 @@ function createScene(
       if (!node || !base) continue
       node.position.copy(base)
       if (held[key]) {
-        if (key === 'power') node.position.y -= 0.06
-        else node.position.x += key === 'ptt' ? 0.06 : -0.06
+        node.position.z -= 0.012
       }
       node.getWorldPosition(point)
       point.project(camera)
